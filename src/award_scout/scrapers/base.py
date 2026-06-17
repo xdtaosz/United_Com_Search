@@ -27,6 +27,27 @@ class MFARequired(ScraperError):
         super().__init__(message)
 
 
+def _find_chrome() -> str | None:
+    import shutil
+
+    for path in (
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+    ):
+        if Path(path).is_file():
+            return path
+
+    candidates = sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux*/chrome"))
+    if candidates:
+        return str(candidates[0])
+
+    system = shutil.which("google-chrome-stable") or shutil.which("google-chrome") or shutil.which("chromium")
+    return system
+
+
 class BaseAirlineScraper(ABC):
     """Base class for airline award scraper implementations.
 
@@ -65,6 +86,7 @@ class BaseAirlineScraper(ABC):
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
             ],
+            executable_path=_find_chrome(),
         )
         self._context = await browser.new_context(
             viewport={"width": 1280, "height": 900},

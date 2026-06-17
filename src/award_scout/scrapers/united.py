@@ -50,8 +50,8 @@ class UnitedScraper(BaseAirlineScraper):
         page.set_default_timeout(settings.browser_timeout_ms)
 
         try:
-            await page.goto(UNITED_LOGIN, wait_until="networkidle")
-            await asyncio.sleep(2)
+            await page.goto(UNITED_LOGIN, wait_until="domcontentloaded", timeout=90000)
+            await asyncio.sleep(3)
 
             mp_number = settings.united_mp_number
             password = settings.united_password
@@ -170,7 +170,7 @@ class UnitedScraper(BaseAirlineScraper):
 
         try:
             search_url = self._build_calendar_url(query)
-            await page.goto(search_url, wait_until="networkidle")
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=90000)
             await asyncio.sleep(5)
 
             if not api_responses:
@@ -240,7 +240,7 @@ class UnitedScraper(BaseAirlineScraper):
 
         page.on("response", capture_v2)
         try:
-            await page.goto(self._build_calendar_url(query), wait_until="networkidle")
+            await page.goto(self._build_calendar_url(query), wait_until="domcontentloaded", timeout=90000)
             await asyncio.sleep(5)
             offers = []
             for resp in api_responses:
