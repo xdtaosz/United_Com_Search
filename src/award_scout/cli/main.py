@@ -191,8 +191,8 @@ def watch(
     cabin: Optional[str] = typer.Option(None, "--cabin", "-c", help="Cabin filter"),
     max_miles: Optional[int] = typer.Option(None, "--max-miles", "-m", help="Max miles"),
     max_stops: Optional[int] = typer.Option(None, "--max-stops", "-s", help="Max stops"),
-    notify_via: Optional[str] = typer.Option(None, "--notify", "-n", help="Notification method (ntfy)"),
-    notify_target: Optional[str] = typer.Option(None, "--notify-target", help="Notification target"),
+    notify_via: Optional[str] = typer.Option(None, "--notify", "-n", help="Notification method (ntfy, email)"),
+    notify_target: Optional[str] = typer.Option(None, "--notify-target", help="Notification target (ntfy topic or email address)"),
 ):
     """Add a watch rule for continuous monitoring."""
     from award_scout.models import WatchRule as WatchRuleModel
@@ -267,6 +267,103 @@ def check():
     from award_scout.monitors import run_watches
 
     run_async(run_watches())
+
+
+# --- Cron ---
+
+@app.command()
+def cron(
+    action: str = typer.Argument(
+        "install", help="Action: install / uninstall / status"
+    ),
+):
+    """Install or remove the hourly cron job for award-scout check."""
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    scout_bin = shutil.which("award-scout")
+    if scout_bin is None:
+        scout_bin = str(Path(sys.executable).parent / "award-scout")
+        if not Path(scout_bin).is_file():
+            console.print(
+                "[red]✗[/red] award-scout not found on PATH. "
+                "Run 'pip install -e .' first."
+            )
+            raise typer.Exit(1)
+
+    log_dir = settings.data_path
+    log_file = log_dir / "cron.log"
+    project_dir = Path(__file__).resolve().parent.parent.parent.parent
+
+    cron_line = (
+        f"0 * * * * cd {project_dir} && {scout_bin} check >> {log_file} 2>&1\n"
+    )
+    cron_line2 = (
+        f"30 * * * * cd {project_dir} && {scout_bin} check >> {log_file} 2>&1\n"
+    )
+
+    if action == "status":
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            console.print("[yellow]No crontab installed.[/yellow]")
+        elif "award-scout check" in result.stdout:
+            console.print("[green]✓[/green] Hourly cron job is installed")
+            console.print(result.stdout)
+        else:
+            console.print("[yellow]Crontab exists but no award-scout job found:[/yellow]")
+            console.print(result.stdout)
+
+    elif action == "install":
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True, text=True, timeout=10,
+        )
+        existing = result.stdout if result.returncode == 0 else ""
+        if "award-scout check" in existing:
+            console.print("[green]✓[/green] Cron job already installed")
+            return
+
+        new_cron = existing + cron_line + cron_line2
+        p = subprocess.run(
+            ["crontab", "-"],
+            input=new_cron, capture_output=True, text=True, timeout=10,
+        )
+        if p.returncode == 0:
+            console.print(
+                f"[green]✓[/green] Hourly cron jobs installed\n"
+                f"  {scout_bin} check → {log_file}\n"
+                f"  Runs at :00 and :30 past every hour"
+            )
+        else:
+            console.print(f"[red]✗[/red] Failed to install cron: {p.stderr}")
+
+    elif action == "uninstall":
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            console.print("[yellow]No crontab to remove.[/yellow]")
+            return
+
+        lines = [l for l in result.stdout.splitlines(keepends=True)
+                 if "award-scout check" not in l]
+        p = subprocess.run(
+            ["crontab", "-"],
+            input="".join(lines), capture_output=True, text=True, timeout=10,
+        )
+        if p.returncode == 0:
+            console.print("[green]✓[/green] Cron jobs removed")
+        else:
+            console.print(f"[red]✗[/red] Failed to remove cron: {p.stderr}")
+
+    else:
+        console.print(f"[red]Unknown action: {action}. Use install/uninstall/status.[/red]")
 
 
 # --- Internal helpers ---
