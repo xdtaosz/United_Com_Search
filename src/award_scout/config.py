@@ -37,9 +37,17 @@ class Settings(BaseSettings):
     # --- Monitoring ---
     watch_interval_minutes: int = 120
 
-    # --- Notifications ---
+    # --- Notifications: ntfy.sh ---
     ntfy_topic: Optional[str] = None
     ntfy_server: str = "https://ntfy.sh"
+
+    # --- Notifications: Email (SMTP) ---
+    email_to: Optional[str] = None
+    email_from: Optional[str] = None
+    email_smtp_host: str = "smtp.163.com"
+    email_smtp_port: int = 465
+    email_smtp_user: Optional[str] = None
+    email_smtp_password: Optional[str] = None
 
     @property
     def data_path(self) -> Path:
