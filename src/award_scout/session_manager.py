@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 DEFAULT_SESSION_TTL_HOURS = 24
-SESSION_VERSION = 1
+MAX_IDLE_HOURS = 12
+SESSION_VERSION = 2
 
 
 class SessionManager:
@@ -42,7 +43,7 @@ class SessionManager:
     # --- Load ---
 
     def load(self, airline: str) -> dict[str, Any] | None:
-        """Load a session. Returns None if missing or expired."""
+        """Load a session. Returns None if missing, expired, or idle too long."""
         path = self._file_path(airline)
         if not path.exists():
             return None
@@ -59,7 +60,28 @@ class SessionManager:
             path.unlink(missing_ok=True)
             return None
 
+        last_used_str = data.get("last_used", data.get("created_at", ""))
+        if self._is_idle_too_long(last_used_str):
+            path.unlink(missing_ok=True)
+            return None
+
         return data
+
+    def touch(self, airline: str) -> bool:
+        """Update last_used timestamp to keep session alive."""
+        path = self._file_path(airline)
+        if not path.exists():
+            return False
+        try:
+            data = json.loads(path.read_text())
+            now = datetime.now(timezone.utc)
+            data["last_used"] = now.isoformat()
+            # Extend expires_at from now
+            data["expires_at"] = (now + timedelta(hours=DEFAULT_SESSION_TTL_HOURS)).isoformat()
+            path.write_text(json.dumps(data, indent=2))
+            return True
+        except (json.JSONDecodeError, OSError):
+            return False
 
     def is_valid(self, airline: str) -> bool:
         return self.load(airline) is not None
@@ -82,6 +104,7 @@ class SessionManager:
             "bearer_token": bearer_token,
             "created_at": now.isoformat(),
             "expires_at": (now + timedelta(hours=ttl_hours)).isoformat(),
+            "last_used": now.isoformat(),
             "metadata": metadata or {},
         }
         path = self._file_path(airline)
@@ -127,6 +150,17 @@ class SessionManager:
         try:
             expires = datetime.fromisoformat(expires_str)
             return datetime.now(timezone.utc) > expires
+        except ValueError:
+            return True
+
+    @staticmethod
+    def _is_idle_too_long(last_used_str: str) -> bool:
+        if not last_used_str:
+            return True
+        try:
+            last_used = datetime.fromisoformat(last_used_str)
+            idle = datetime.now(timezone.utc) - last_used
+            return idle > timedelta(hours=MAX_IDLE_HOURS)
         except ValueError:
             return True
 

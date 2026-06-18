@@ -149,6 +149,7 @@ class UnitedScraper(BaseAirlineScraper):
         if self._bearer_token:
             offers = await self._search_via_api(query)
             if offers:
+                self.touch_session()
                 return offers
 
         return await self._search_via_browser(query)

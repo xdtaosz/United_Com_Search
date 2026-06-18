@@ -153,6 +153,7 @@ class BaseAirlineScraper(ABC):
             token = saved.get("bearer_token")
             if token and await self._validate_token(token):
                 self._bearer_token = token
+                self._touch_session()
                 return True
 
         # 2. Try cookie-based login
@@ -199,6 +200,14 @@ class BaseAirlineScraper(ABC):
     def _token_validation_url(self) -> str | None:
         """URL to validate a bearer token. Override per airline."""
         return None
+
+    def touch_session(self) -> None:
+        """Update last_used to keep session alive. Call after successful API use."""
+        self._session.touch(self.airline_name)
+
+    def _touch_session(self) -> None:
+        """Internal: update last_used without reading the file twice."""
+        self._session.touch(self.airline_name)
 
     async def _capture_bearer_token(self, ctx: BrowserContext) -> str | None:
         """Navigate to search page and intercept the x-authorization-api header."""
