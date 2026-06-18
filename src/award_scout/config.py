@@ -68,5 +68,11 @@ class Settings(BaseSettings):
     def cookie_path(self, airline: str) -> Path:
         return self.cookies_dir / f"{airline}_cookies.json"
 
+    @property
+    def sessions_dir(self) -> Path:
+        d = self.data_path / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
 
 settings = Settings()
