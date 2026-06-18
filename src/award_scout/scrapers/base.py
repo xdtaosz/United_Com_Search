@@ -7,10 +7,12 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Optional
 
+import httpx
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from award_scout.config import settings
 from award_scout.models import AwardOffer, SearchQuery
+from award_scout.session_manager import SessionManager, extract_bearer_from_request_headers
 
 
 class ScraperError(Exception):
@@ -63,6 +65,8 @@ class BaseAirlineScraper(ABC):
         self._playwright: Playwright | None = None
         self._context: BrowserContext | None = None
         self._mfa_callback: Callable[[], Any] | None = None
+        self._bearer_token: str | None = None
+        self._session: SessionManager = SessionManager(settings.sessions_dir)
 
     @property
     @abstractmethod
@@ -130,8 +134,28 @@ class BaseAirlineScraper(ABC):
 
     # --- Login flow ---
 
+    @property
+    def bearer_token(self) -> str | None:
+        """Current bearer token, if authenticated."""
+        return self._bearer_token
+
     async def login(self) -> bool:
-        """Full login flow with cookie cache + MFA handling."""
+        """Full login flow: session → cookies → fresh login.
+
+        Priority:
+          1. Load saved bearer token + validate via API probe
+          2. Load saved cookies + check browser login state
+          3. Full login with credentials + MFA
+        """
+        # 1. Try saved session
+        saved = self._session.load(self.airline_name)
+        if saved:
+            token = saved.get("bearer_token")
+            if token and await self._validate_token(token):
+                self._bearer_token = token
+                return True
+
+        # 2. Try cookie-based login
         if await self.load_cookies():
             ctx = await self._ensure_browser()
             page = await ctx.new_page()
@@ -140,12 +164,91 @@ class BaseAirlineScraper(ABC):
                 await asyncio.sleep(2)
                 if await self._is_logged_in(page):
                     await page.close()
+                    self._bearer_token = await self._capture_bearer_token(ctx)
+                    if self._bearer_token:
+                        await self._save_full_session()
                     return True
             except Exception:
                 pass
             await page.close()
 
+        # 3. Full login
         return await self._do_login()
+
+    async def _validate_token(self, token: str) -> bool:
+        """Check if a bearer token is still valid via a lightweight API probe."""
+        validation_url = self._token_validation_url()
+        if not validation_url:
+            return False
+        try:
+            cookies = self._session.get_cookies_httpx(self.airline_name) or {}
+            headers = {
+                "Content-Type": "application/json",
+                "x-authorization-api": f"bearer {token}",
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+            }
+            async with httpx.AsyncClient(cookies=cookies, timeout=15) as client:
+                resp = await client.get(validation_url, headers=headers)
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    def _token_validation_url(self) -> str | None:
+        """URL to validate a bearer token. Override per airline."""
+        return None
+
+    async def _capture_bearer_token(self, ctx: BrowserContext) -> str | None:
+        """Navigate to search page and intercept the x-authorization-api header."""
+        captured: list[str] = []
+
+        async def on_request(request):
+            nonlocal captured
+            if captured:
+                return
+            url = request.url
+            if "FetchAwardCalendar" in url or "FetchFlights" in url:
+                token = extract_bearer_from_request_headers(request.headers)
+                if token:
+                    captured.append(token)
+
+        page = await ctx.new_page()
+        page.on("request", on_request)
+        try:
+            search_url = self._probe_search_url()
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
+        except Exception:
+            pass
+        finally:
+            page.remove_listener("request", on_request)
+            await page.close()
+
+        return captured[0] if captured else None
+
+    def _probe_search_url(self) -> str:
+        """Build a minimal search URL for token capture. Override per airline."""
+        return self.login_url
+
+    async def _save_full_session(self) -> None:
+        """After successful login, persist cookies and bearer token."""
+        ctx = await self._ensure_browser()
+        pw_cookies = await ctx.cookies()
+        # Save Playwright cookies for browser reuse
+        self.cookie_file.write_text(json.dumps(pw_cookies, indent=2))
+        # Save session with cookies + token
+        self._session.save(
+            airline=self.airline_name,
+            cookies=[
+                {"name": c["name"], "value": c["value"], "domain": c["domain"],
+                 "path": c["path"], "httpOnly": c.get("httpOnly", False),
+                 "secure": c.get("secure", False), "sameSite": c.get("sameSite", "Lax")}
+                for c in pw_cookies
+            ],
+            bearer_token=self._bearer_token or "",
+        )
 
     @abstractmethod
     async def _is_logged_in(self, page: Page) -> bool:
