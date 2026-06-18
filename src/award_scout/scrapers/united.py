@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 from datetime import date, timedelta
 from typing import Any, Optional
-from urllib.parse import urlencode
 
+import httpx
 from playwright.async_api import Page
 
 from award_scout.config import settings
@@ -19,10 +20,10 @@ from award_scout.scrapers.base import BaseAirlineScraper, LoginError, MFARequire
 
 UNITED_BASE = "https://www.united.com"
 UNITED_LOGIN = f"{UNITED_BASE}/en/us/login"
-UNITED_AWARD_CALENDAR_API = (
-    "https://www.united.com/api/flight/availability/awardCalendar"
-)
-UNITED_SEARCH_API = "https://www.united.com/api/flight/availability/v2"
+
+UNITED_FETCH_AWARD_CALENDAR = f"{UNITED_BASE}/api/flight/FetchAwardCalendar"
+UNITED_FETCH_FLIGHTS = f"{UNITED_BASE}/api/flight/FetchFlights"
+UNITED_FSR_SEARCH = f"{UNITED_BASE}/en/us/fsr/choose-flights"
 
 
 class UnitedScraper(BaseAirlineScraper):
@@ -34,6 +35,9 @@ class UnitedScraper(BaseAirlineScraper):
         return UNITED_LOGIN
 
     # --- Login ---
+
+    def _token_validation_url(self) -> str | None:
+        return f"{UNITED_BASE}/api/auth/validate-token"
 
     async def _is_logged_in(self, page: Page) -> bool:
         try:
@@ -60,8 +64,6 @@ class UnitedScraper(BaseAirlineScraper):
                     "UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env"
                 )
 
-            # Fill login form
-            # United's login has multiple iframes/fields, try multiple selectors
             mp_field = await page.wait_for_selector(
                 'input[name="mpNumber"], input[data-test="mpNumber-input"], #mpNumber',
                 timeout=15000,
@@ -78,18 +80,14 @@ class UnitedScraper(BaseAirlineScraper):
             if pw_field:
                 await pw_field.fill(password)
 
-            # Click submit
             submit_btn = await page.wait_for_selector(
                 'button[type="submit"], button[data-test="sign-in-button"]', timeout=5000
             )
             if submit_btn:
                 await submit_btn.click()
 
-            # Wait for navigation after login
             await asyncio.sleep(3)
 
-            # Check for MFA challenge
-            page_content = await page.content()
             if await self._detect_mfa(page):
                 code = await self._handle_mfa(page)
                 if not code:
@@ -97,11 +95,13 @@ class UnitedScraper(BaseAirlineScraper):
                 await self._submit_mfa(page, code)
                 await asyncio.sleep(3)
 
-            # Verify login success
             if not await self._is_logged_in(page):
                 raise LoginError("Login failed — check credentials or MFA")
 
             await self.save_cookies()
+            self._bearer_token = await self._capture_bearer_token(ctx)
+            if self._bearer_token:
+                await self._save_full_session()
             return True
 
         finally:
@@ -143,324 +143,228 @@ class UnitedScraper(BaseAirlineScraper):
     # --- Search ---
 
     async def search(self, query: SearchQuery) -> list[AwardOffer]:
-        """Search United award availability using the award calendar API.
-
-        The award calendar endpoint returns ~30 days of pricing in one request.
-        We intercept the API response via Playwright route capture.
-        """
         if not await self.login():
             raise LoginError("Cannot search without successful login")
 
+        if self._bearer_token:
+            offers = await self._search_via_api(query)
+            if offers:
+                return offers
+
+        return await self._search_via_browser(query)
+
+    def _probe_search_url(self) -> str:
+        """Build a minimal award search URL that triggers FetchAwardCalendar."""
+        params = {
+            "f": "SFO",
+            "t": "ORD",
+            "d": date.today().strftime("%Y/%m/%d"),
+            "tt": "1",
+            "at": "1",
+            "sc": "3",
+            "act": "2",
+            "px": "1",
+            "tqp": "A",
+        }
+        return f"{UNITED_FSR_SEARCH}?{urllib.parse.urlencode(params)}"
+
+    # --- API-first search (httpx) ---
+
+    async def _search_via_api(self, query: SearchQuery) -> list[AwardOffer]:
+        cookies = self._session.get_cookies_httpx(self.airline_name) or {}
+        headers = {
+            "Content-Type": "application/json",
+            "x-authorization-api": f"bearer {self._bearer_token}",
+            "Origin": UNITED_BASE,
+            "Referer": f"{UNITED_BASE}/en/us/fsr/choose-flights",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+        }
+
+        payload = self._build_api_payload(query)
+        try:
+            async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
+                resp = await client.post(
+                    UNITED_FETCH_AWARD_CALENDAR,
+                    json=payload,
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("Status") == 200:
+                        return self._parse_fetch_award_calendar(data, query)
+        except Exception:
+            pass
+        return []
+
+    def _build_api_payload(self, query: SearchQuery) -> dict[str, Any]:
+        is_business = query.cabin in (CabinClass.BUSINESS, CabinClass.FIRST)
+        fare_family = "BUSINESS" if is_business else "ECO"
+        cabin_main = "premium" if is_business else "eco"
+
+        return {
+            "SearchTypeSelection": 1,
+            "SortType": "bestmatches",
+            "Trips": [{
+                "Origin": query.origin.upper(),
+                "Destination": query.destination.upper(),
+                "DepartDate": query.depart_date.strftime("%Y/%m/%d"),
+                "Index": 1,
+                "TripIndex": 1,
+                "SearchRadiusMilesOrigin": 0,
+                "SearchRadiusMilesDestination": 0,
+                "DepartTimeApprox": 0,
+                "SearchFiltersIn": {
+                    "FareFamily": fare_family,
+                    "AirportsStop": None,
+                    "AirportsStopToAvoid": None,
+                    "ShopIndicators": {
+                        "IsTravelCreditsApplied": False,
+                        "IsDoveFlow": True,
+                    },
+                },
+            }],
+            "CabinPreferenceMain": cabin_main,
+            "PaxInfoList": [{"PaxType": 1}],
+            "AwardTravel": True,
+            "NGRP": True,
+            "CalendarLengthOfStay": -1,
+            "PetCount": 0,
+            "FareType": "mixedtoggle",
+            "BuildHashValue": "true",
+        }
+
+    # --- Browser-based search (fallback) ---
+
+    async def _search_via_browser(self, query: SearchQuery) -> list[AwardOffer]:
         ctx = await self._ensure_browser()
         page = await ctx.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
-
-        offers: list[AwardOffer] = []
         api_responses: list[dict[str, Any]] = []
 
-        async def capture_api_response(response):
-            if UNITED_AWARD_CALENDAR_API in response.url and response.status == 200:
+        async def capture_api(response):
+            if response.status == 200 and (
+                UNITED_FETCH_AWARD_CALENDAR in response.url
+                or UNITED_FETCH_FLIGHTS in response.url
+            ):
                 try:
-                    body = await response.json()
-                    api_responses.append(body)
+                    api_responses.append(await response.json())
                 except Exception:
                     pass
 
-        page.on("response", capture_api_response)
-
+        page.on("response", capture_api)
         try:
-            search_url = self._build_calendar_url(query)
+            search_url = self._build_search_url(query)
             await page.goto(search_url, wait_until="domcontentloaded", timeout=90000)
             await asyncio.sleep(5)
 
-            if not api_responses:
-                await self._trigger_search_via_ui(page)
-                await asyncio.sleep(5)
-
-            for resp_data in api_responses:
-                parsed = self._parse_calendar_response(resp_data, query)
+            offers: list[AwardOffer] = []
+            for resp in api_responses:
+                parsed = self._parse_fetch_award_calendar(resp, query)
                 offers.extend(parsed)
-
-            if not offers:
-                offers = await self._search_v2_api(page, query)
-
             return offers
-
         finally:
-            page.remove_listener("response", capture_api_response)
+            page.remove_listener("response", capture_api)
             await page.close()
 
-    def _build_calendar_url(self, query: SearchQuery) -> str:
-        params: dict[str, str] = {
-            "origin": query.origin.upper(),
-            "destination": query.destination.upper(),
-            "departDate": query.depart_date.isoformat(),
-            "returnDate": query.return_date.isoformat() if query.return_date else "",
-            "cabin": self._united_cabin_code(query.cabin),
-            "passengers": str(query.passengers),
+    def _build_search_url(self, query: SearchQuery) -> str:
+        sc = "7" if query.cabin in (CabinClass.BUSINESS, CabinClass.FIRST) else "3"
+        params = {
+            "f": query.origin.upper(),
+            "t": query.destination.upper(),
+            "d": query.depart_date.strftime("%Y/%m/%d"),
+            "tt": "1",
+            "at": "1",
+            "sc": sc,
+            "act": "2",
+            "px": str(query.passengers),
+            "tqp": "A",
         }
-        return f"{UNITED_BASE}/en/us/booking/flights/award/calendar?{urlencode(params)}"
-
-    @staticmethod
-    def _united_cabin_code(cabin: CabinClass) -> str:
-        mapping = {
-            CabinClass.ECONOMY: "economy",
-            CabinClass.PREMIUM_ECONOMY: "premium",
-            CabinClass.BUSINESS: "business",
-            CabinClass.FIRST: "first",
-        }
-        return mapping.get(cabin, "economy")
-
-    async def _trigger_search_via_ui(self, page: Page) -> None:
-        """Fallback: interact with the search form to trigger API calls."""
-        try:
-            submit = await page.wait_for_selector(
-                'button[type="submit"], button[data-test="award-search-button"]',
-                timeout=8000,
-            )
-            if submit:
-                await submit.click()
-                await asyncio.sleep(3)
-        except Exception:
-            pass
-
-    async def _search_v2_api(
-        self, page: Page, query: SearchQuery
-    ) -> list[AwardOffer]:
-        """Direct API call using the authenticated session's cookies/tokens."""
-        api_responses: list[dict[str, Any]] = []
-
-        async def capture_v2(response):
-            if UNITED_SEARCH_API in response.url and response.status == 200:
-                try:
-                    body = await response.json()
-                    api_responses.append(body)
-                except Exception:
-                    pass
-
-        page.on("response", capture_v2)
-        try:
-            await page.goto(self._build_calendar_url(query), wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(5)
-            offers = []
-            for resp in api_responses:
-                offers.extend(self._parse_v2_response(resp, query))
-            return offers
-        finally:
-            page.remove_listener("response", capture_v2)
+        if query.return_date:
+            params["rd"] = query.return_date.strftime("%Y/%m/%d")
+            params["tt"] = "2"
+        return f"{UNITED_FSR_SEARCH}?{urllib.parse.urlencode(params)}"
 
     # --- Response Parsing ---
 
-    def _parse_calendar_response(
+    def _parse_fetch_award_calendar(
         self, data: dict[str, Any], query: SearchQuery
     ) -> list[AwardOffer]:
-        """Parse the award calendar API response."""
         offers: list[AwardOffer] = []
-
-        calendar_days = data.get("data", {}).get("calendarDays", [])
-        if not calendar_days:
-            calendar_days = data.get("calendarDays", [])
-
-        for day in calendar_days:
-            depart_date_str = day.get("departDate", "")
-            if not depart_date_str:
-                continue
-
-            trips = day.get("trips", [])
-            for trip in trips:
-                offers.extend(
-                    self._parse_trip(trip, query, depart_date_str)
+        d = data.get("data", data)
+        for trip in d.get("Trips", []):
+            depart_date = trip.get("DepartDate", "")
+            for flight in trip.get("Flights", []):
+                products = (
+                    flight.get("Products")
+                    or flight.get("Fares")
+                    or []
                 )
+                segments = self._parse_flight_segments(flight)
+                for prod in products:
+                    miles = int(prod.get("AwardMiles", prod.get("Miles", 0)) or 0)
+                    if miles == 0:
+                        continue
+                    taxes = float(prod.get("Cash", prod.get("TotalPrice", 0)) or 0)
+                    cabin_str = prod.get("Cabin", prod.get("CabinType", "Economy"))
+                    cabin = CabinClass.from_united_code(cabin_str)
+                    seats = prod.get("SeatsRemaining", prod.get("AvailableSeats", 1))
+                    fare_class = prod.get("FareClass", prod.get("BookingCode", ""))
+                    total_dur = sum(s.duration_minutes for s in segments) if segments else 0
+                    stops = len(segments) - 1 if segments else 0
 
+                    offers.append(AwardOffer(
+                        source_airline=Airline.UNITED.value,
+                        query_origin=query.origin.upper(),
+                        query_destination=query.destination.upper(),
+                        depart_date=depart_date or query.depart_date.isoformat(),
+                        return_date=query.return_date.isoformat() if query.return_date else None,
+                        segments=segments,
+                        total_duration_minutes=total_dur,
+                        stops=stops,
+                        miles_required=miles,
+                        taxes_fees=taxes,
+                        cabin=cabin,
+                        total_seats_available=seats or 1,
+                        raw_data=prod,
+                    ))
         return offers
-
-    def _parse_v2_response(self, data: dict[str, Any], query: SearchQuery) -> list[AwardOffer]:
-        """Parse the v2 flight search API response."""
-        offers: list[AwardOffer] = []
-
-        trips = data.get("data", {}).get("trips", [])
-        for trip in trips:
-            depart_date_str = trip.get("departDate", "")
-            for bound in trip.get("bounds", []):
-                offers.extend(
-                    self._parse_bound(bound, query, depart_date_str)
-                )
-
-        return offers
-
-    def _parse_trip(
-        self, trip: dict[str, Any], query: SearchQuery, depart_date_str: str
-    ) -> list[AwardOffer]:
-        results: list[AwardOffer] = []
-        products = trip.get("products", [])
-        if not products:
-            products = trip.get("fares", [])
-
-        segments_data = trip.get("segments", trip.get("flights", []))
-        parsed_segments = self._parse_segments(segments_data)
-
-        for prod in products:
-            miles = prod.get("miles", prod.get("price", prod.get("totalPrice", 0)))
-            miles = int(miles) if miles else 0
-            taxes = float(
-                prod.get("taxes", prod.get("taxesAndFees", prod.get("cashPrice", 0)))
-            )
-            cabin_str = prod.get("cabin", prod.get("cabinType", "economy"))
-            cabin = CabinClass.from_united_code(cabin_str)
-            seats = prod.get("seatsRemaining", prod.get("availableSeats", 1))
-            fare_class = prod.get("fareClass", prod.get("bookingCode", ""))
-
-            if miles == 0:
-                continue
-
-            segments = [
-                FlightSegment(
-                    airline=s.airline,
-                    flight_number=s.flight_number,
-                    departure_airport=s.departure_airport,
-                    arrival_airport=s.arrival_airport,
-                    departure_time=s.departure_time,
-                    arrival_time=s.arrival_time,
-                    duration_minutes=s.duration_minutes,
-                    aircraft=s.aircraft,
-                    fare_class=fare_class,
-                    seats_available=(
-                        seats if s == parsed_segments[-1] else None
-                    ),
-                )
-                for s in parsed_segments
-            ]
-
-            total_duration = (
-                sum(s.duration_minutes for s in parsed_segments)
-                if parsed_segments
-                else 0
-            )
-            stops = len(parsed_segments) - 1 if parsed_segments else 0
-
-            offer = AwardOffer(
-                source_airline=Airline.UNITED.value,
-                query_origin=query.origin.upper(),
-                query_destination=query.destination.upper(),
-                depart_date=depart_date_str,
-                return_date=query.return_date.isoformat() if query.return_date else None,
-                segments=segments,
-                total_duration_minutes=total_duration,
-                stops=stops,
-                miles_required=miles,
-                taxes_fees=taxes,
-                cabin=cabin,
-                total_seats_available=seats,
-                raw_data=prod,
-            )
-            results.append(offer)
-
-        return results
-
-    def _parse_bound(
-        self, bound: dict[str, Any], query: SearchQuery, depart_date_str: str
-    ) -> list[AwardOffer]:
-        results: list[AwardOffer] = []
-        fares = bound.get("fares", [])
-        segments_data = bound.get("segments", [])
-        parsed_segments = self._parse_segments(segments_data)
-
-        for fare in fares:
-            miles = int(fare.get("miles", fare.get("awardMiles", 0)))
-            taxes = float(
-                fare.get("taxes", fare.get("cashAmount", 0))
-            )
-            cabin_str = fare.get("cabin", fare.get("cabinType", "economy"))
-            cabin = CabinClass.from_united_code(cabin_str)
-            seats = int(fare.get("seatsRemaining", fare.get("availableSeats", 0)))
-            fare_class = fare.get("fareClass", fare.get("bookingCode", ""))
-
-            if miles == 0:
-                continue
-
-            segments = [
-                FlightSegment(
-                    airline=s.airline,
-                    flight_number=s.flight_number,
-                    departure_airport=s.departure_airport,
-                    arrival_airport=s.arrival_airport,
-                    departure_time=s.departure_time,
-                    arrival_time=s.arrival_time,
-                    duration_minutes=s.duration_minutes,
-                    aircraft=s.aircraft,
-                    fare_class=fare_class,
-                    seats_available=(
-                        seats if s == parsed_segments[-1] else None
-                    ),
-                )
-                for s in parsed_segments
-            ]
-
-            total_duration = (
-                sum(s.duration_minutes for s in parsed_segments)
-                if parsed_segments
-                else 0
-            )
-            stops = len(parsed_segments) - 1 if parsed_segments else 0
-
-            offer = AwardOffer(
-                source_airline=Airline.UNITED.value,
-                query_origin=query.origin.upper(),
-                query_destination=query.destination.upper(),
-                depart_date=depart_date_str,
-                return_date=query.return_date.isoformat() if query.return_date else None,
-                segments=segments,
-                total_duration_minutes=total_duration,
-                stops=stops,
-                miles_required=miles,
-                taxes_fees=taxes,
-                cabin=cabin,
-                total_seats_available=seats,
-                raw_data=fare,
-            )
-            results.append(offer)
-
-        return results
 
     @staticmethod
-    def _parse_segments(segments_data: list[dict[str, Any]]) -> list[FlightSegment]:
+    def _parse_flight_segments(flight: dict[str, Any]) -> list[FlightSegment]:
         segments: list[FlightSegment] = []
-        for seg in segments_data:
-            segments.append(
-                FlightSegment(
-                    airline=seg.get("airline", seg.get("carrier", "")),
-                    flight_number=str(
-                        seg.get("flightNumber", seg.get("flightNum", ""))
-                    ),
-                    departure_airport=seg.get(
-                        "origin", seg.get("departureAirport", {})
-                    ).get("code", "")
-                    if isinstance(seg.get("origin"), dict)
-                    else seg.get("origin", seg.get("departureAirport", "")),
-                    arrival_airport=seg.get(
-                        "destination", seg.get("arrivalAirport", {})
-                    ).get("code", "")
-                    if isinstance(seg.get("destination"), dict)
-                    else seg.get("destination", seg.get("arrivalAirport", "")),
-                    departure_time=seg.get(
-                        "departureTime",
-                        seg.get("departTime", seg.get("departDateTime", "")),
-                    ),
-                    arrival_time=seg.get(
-                        "arrivalTime",
-                        seg.get("arriveTime", seg.get("arrivalDateTime", "")),
-                    ),
-                    duration_minutes=int(
-                        seg.get("duration", seg.get("flightTime", 0))
-                    ),
-                    aircraft=seg.get("aircraft", seg.get("plane", "")),
-                    fare_class=seg.get("fareClass", seg.get("bookingCode", "")),
-                    seats_available=seg.get("seatsRemaining"),
-                )
-            )
+        conns = flight.get("Connections", [])
+        if not conns:
+            # Nonstop: build single segment from flight-level fields
+            dep_dt = flight.get("DepartDateTime", "")
+            arr_dt = flight.get("DestinationDateTime", "")
+            segments.append(FlightSegment(
+                airline=flight.get("MarketingCarrier", ""),
+                flight_number=str(flight.get("FlightNumber", "")),
+                departure_airport=flight.get("Origin", ""),
+                arrival_airport=flight.get("Destination", ""),
+                departure_time=dep_dt,
+                arrival_time=arr_dt,
+                duration_minutes=int(flight.get("TravelMinutes", 0)),
+                aircraft=flight.get("Equipment", ""),
+            ))
+        else:
+            for c in conns:
+                segments.append(FlightSegment(
+                    airline=c.get("Carrier", ""),
+                    flight_number=str(c.get("FlightNumber", "")),
+                    departure_airport=c.get("Origin", ""),
+                    arrival_airport=c.get("Destination", ""),
+                    departure_time=c.get("DepartureTime", c.get("DepartDateTime", "")),
+                    arrival_time=c.get("ArrivalTime", c.get("ArriveDateTime", "")),
+                    duration_minutes=int(c.get("Duration", 0)),
+                    aircraft=c.get("Equipment", ""),
+                ))
         return segments
 
-    # --- Utility ---
+    # --- Date range ---
 
     async def search_route_range(
         self,
@@ -470,7 +374,6 @@ class UnitedScraper(BaseAirlineScraper):
         end_date: date,
         cabin: CabinClass = CabinClass.ECONOMY,
     ) -> dict[str, list[AwardOffer]]:
-        """Search a range of dates. Returns dict of date -> offers."""
         results: dict[str, list[AwardOffer]] = {}
         current = start_date
         while current <= end_date:
