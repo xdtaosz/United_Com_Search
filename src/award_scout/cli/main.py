@@ -259,6 +259,65 @@ def unwatch(watch_id: str = typer.Argument(..., help="Watch rule ID to remove"))
     console.print(f"[green]✓[/green] Watch rule {watch_id[:8]} deactivated")
 
 
+# --- Login ---
+
+@app.command()
+def login(
+    airline: str = typer.Argument(..., help="Airline to login: united, american, delta, alaska"),
+):
+    """Log in to an airline once to persist session. Subsequent searches skip MFA."""
+    airline_lower = airline.lower()
+
+    async def _mfa_prompt():
+        return typer.prompt(
+            "MFA verification code (check email/phone/SMS)",
+            hide_input=False,
+        )
+
+    if airline_lower == "united":
+        from award_scout.scrapers.united import UnitedScraper
+
+        async def _login():
+            async with UnitedScraper() as scraper:
+                scraper.set_mfa_callback(_mfa_prompt)
+                ok = await scraper.login()
+                if ok:
+                    token = scraper.bearer_token
+                    return token
+                return None
+
+        token = run_async(_login())
+        if token:
+            console.print(
+                f"[green]✓[/green] United login successful. Session saved to "
+                f"{settings.sessions_dir}/united_session.json"
+            )
+            console.print(f"[dim]  Bearer token: {token[:20]}...[/dim]")
+        else:
+            console.print("[red]✗[/red] United login failed.")
+            raise typer.Exit(1)
+
+    elif airline_lower == "american":
+        from award_scout.scrapers.american import AmericanScraper
+
+        async def _login():
+            async with AmericanScraper() as scraper:
+                scraper.set_mfa_callback(_mfa_prompt)
+                ok = await scraper.login()
+                return "ok" if ok else None
+
+        result = run_async(_login())
+        if result:
+            console.print(f"[green]✓[/green] American Airlines login successful.")
+        else:
+            console.print("[red]✗[/red] American Airlines login failed.")
+            raise typer.Exit(1)
+
+    else:
+        console.print(f"[red]✗ Unsupported airline: {airline}. Options: united, american[/red]")
+        raise typer.Exit(1)
+
+
 # --- Check watches ---
 
 @app.command()
