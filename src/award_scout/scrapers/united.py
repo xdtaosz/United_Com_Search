@@ -54,10 +54,12 @@ class UnitedScraper(BaseAirlineScraper):
 
     async def _is_logged_in(self, page: Page) -> bool:
         try:
-            await page.goto(UNITED_BASE + "/en/us/", wait_until="domcontentloaded")
-            await asyncio.sleep(2)
+            await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
+            await asyncio.sleep(8)
             content = await page.content()
-            return "Hi, RAN" in content or "cardmember" in content.lower() or "mileageplus" in content.lower()
+            # Only check markers that appear only when truly authenticated:
+            # "Cardmember" badge, or auth-specific session indicator
+            return "Cardmember" in content or '"isLoggedIn":true' in content
         except Exception:
             return False
 
@@ -68,8 +70,8 @@ class UnitedScraper(BaseAirlineScraper):
 
         try:
             # United login is a modal on homepage, not a separate page
-            await page.goto(UNITED_BASE + "/en/us/", wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(3)
+            await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
+            await asyncio.sleep(10)
 
             mp_number = settings.united_mp_number
             password = settings.united_password
@@ -81,11 +83,11 @@ class UnitedScraper(BaseAirlineScraper):
             # Step 1: click "Sign in" in navbar to open login modal
             signin_btn = page.locator('button:has-text("Sign in")').first
             await signin_btn.click()
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
             # Step 2: fill form inside the modal
             mp_field = page.locator('input[name="mpNumber"]')
-            await mp_field.wait_for(state="visible", timeout=15000)
+            await mp_field.wait_for(state="visible", timeout=30000)
             await mp_field.fill(mp_number)
 
             pw_field = page.locator('input[name="password"]')
