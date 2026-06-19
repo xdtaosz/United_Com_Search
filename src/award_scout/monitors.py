@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import random
 import smtplib
 import ssl
 from datetime import date
@@ -42,35 +44,37 @@ async def run_watches() -> None:
 
 
 async def _check_rule(rule: WatchRule) -> list[AwardOffer]:
-    """Run a search for a watch rule."""
+    """Run a single calendar search per route (FetchAwardCalendar returns 30 days)."""
     start = rule.start_date or date.today()
     end = rule.end_date or date.today()
 
     all_offers: list[AwardOffer] = []
-    current = start
 
-    while current <= end:
-        query = SearchQuery(
-            origin=rule.origin,
-            destination=rule.destination,
-            depart_date=current,
-            cabin=rule.cabin or CabinClass.ECONOMY,
-            airlines=rule.airlines,
-            max_miles=rule.max_miles,
-            max_stops=rule.max_stops,
-        )
+    for airline in rule.airlines or ["united", "american"]:
+        try:
+            query = SearchQuery(
+                origin=rule.origin,
+                destination=rule.destination,
+                depart_date=start,
+                cabin=rule.cabin or CabinClass.ECONOMY,
+                airlines=rule.airlines,
+                max_miles=rule.max_miles,
+                max_stops=rule.max_stops,
+            )
+            offers = await _search_airline(airline, query)
+            all_offers.extend(offers)
+        except Exception:
+            pass
 
-        for airline in rule.airlines or ["united", "american"]:
-            try:
-                offers = await _search_airline(airline, query)
-                all_offers.extend(offers)
-            except Exception:
-                pass
+        if len(rule.airlines or ["united"]) > 1:
+            base = settings.search_delay_seconds
+            jitter = random.uniform(0, base * 0.5)
+            await asyncio.sleep(base + jitter)
 
-        from datetime import timedelta
-        current += timedelta(days=1)
-
-    return all_offers
+    # Filter by date range
+    start_str = start.isoformat()
+    end_str = end.isoformat()
+    return [o for o in all_offers if start_str <= o.depart_date <= end_str]
 
 
 async def _search_airline(airline: str, query: SearchQuery) -> list[AwardOffer]:

@@ -336,7 +336,7 @@ def cron(
         "install", help="Action: install / uninstall / status"
     ),
 ):
-    """Install or remove the hourly cron job for award-scout check."""
+    """Install or remove the cron job for award-scout check (every 2 hours)."""
     import shutil
     import subprocess
     import sys
@@ -357,10 +357,7 @@ def cron(
     project_dir = Path(__file__).resolve().parent.parent.parent.parent
 
     cron_line = (
-        f"0 * * * * cd {project_dir} && {scout_bin} check >> {log_file} 2>&1\n"
-    )
-    cron_line2 = (
-        f"30 * * * * cd {project_dir} && {scout_bin} check >> {log_file} 2>&1\n"
+        f"0 */2 * * * cd {project_dir} && {scout_bin} check >> {log_file} 2>&1\n"
     )
 
     if action == "status":
@@ -371,7 +368,7 @@ def cron(
         if result.returncode != 0:
             console.print("[yellow]No crontab installed.[/yellow]")
         elif "award-scout check" in result.stdout:
-            console.print("[green]✓[/green] Hourly cron job is installed")
+            console.print("[green]✓[/green] Cron job is installed (every 2 hours)")
             console.print(result.stdout)
         else:
             console.print("[yellow]Crontab exists but no award-scout job found:[/yellow]")
@@ -387,16 +384,16 @@ def cron(
             console.print("[green]✓[/green] Cron job already installed")
             return
 
-        new_cron = existing + cron_line + cron_line2
+        new_cron = existing + cron_line
         p = subprocess.run(
             ["crontab", "-"],
             input=new_cron, capture_output=True, text=True, timeout=10,
         )
         if p.returncode == 0:
             console.print(
-                f"[green]✓[/green] Hourly cron jobs installed\n"
+                f"[green]✓[/green] Cron job installed (every 2 hours)\n"
                 f"  {scout_bin} check → {log_file}\n"
-                f"  Runs at :00 and :30 past every hour"
+                f"  Runs at :00 past every 2nd hour"
             )
         else:
             console.print(f"[red]✗[/red] Failed to install cron: {p.stderr}")

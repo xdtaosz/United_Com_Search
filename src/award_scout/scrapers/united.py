@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import urllib.parse
 from datetime import date, timedelta
 from typing import Any, Optional
@@ -172,6 +173,7 @@ class UnitedScraper(BaseAirlineScraper):
     # --- API-first search (httpx) ---
 
     async def _search_via_api(self, query: SearchQuery) -> list[AwardOffer]:
+        await _rate_limit_pause()
         cookies = self._session.get_cookies_httpx(self.airline_name) or {}
         headers = {
             "Content-Type": "application/json",
@@ -388,3 +390,9 @@ class UnitedScraper(BaseAirlineScraper):
             results[current.isoformat()] = offers
             current += timedelta(days=1)
         return results
+
+
+async def _rate_limit_pause() -> None:
+    base_delay = settings.search_delay_seconds
+    jitter = random.uniform(0, base_delay * 0.5)
+    await asyncio.sleep(base_delay + jitter)

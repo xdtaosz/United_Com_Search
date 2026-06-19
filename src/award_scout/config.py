@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # --- Monitoring ---
     watch_interval_minutes: int = 120
 
+    # --- Rate limiting (anti-ban) ---
+    search_delay_seconds: float = 8.0
+
     # --- Notifications: ntfy.sh ---
     ntfy_topic: Optional[str] = None
     ntfy_server: str = "https://ntfy.sh"
