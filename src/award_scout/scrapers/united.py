@@ -34,19 +34,30 @@ class UnitedScraper(BaseAirlineScraper):
 
     @property
     def login_url(self) -> str:
-        return UNITED_LOGIN
+        return UNITED_BASE + "/en/us/"
 
     # --- Login ---
 
     def _token_validation_url(self) -> str | None:
         return f"{UNITED_BASE}/api/auth/validate-token"
 
+    async def _validate_token(self, token: str) -> bool:
+        """Check session via browser (httpx blocked by Akamai)."""
+        if not await self.load_cookies():
+            return False
+        ctx = await self._ensure_browser()
+        page = await ctx.new_page()
+        try:
+            return await self._is_logged_in(page)
+        finally:
+            await page.close()
+
     async def _is_logged_in(self, page: Page) -> bool:
         try:
-            await page.goto(f"{UNITED_BASE}/en/us/account", wait_until="domcontentloaded")
-            await asyncio.sleep(1)
+            await page.goto(UNITED_BASE + "/en/us/", wait_until="domcontentloaded")
+            await asyncio.sleep(2)
             content = await page.content()
-            return "mileageplus-number" in content.lower() or "sign out" in content.lower()
+            return "Hi, RAN" in content or "cardmember" in content.lower() or "mileageplus" in content.lower()
         except Exception:
             return False
 
@@ -56,8 +67,9 @@ class UnitedScraper(BaseAirlineScraper):
         page.set_default_timeout(settings.browser_timeout_ms)
 
         try:
-            await page.goto(UNITED_LOGIN, wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(5)
+            # United login is a modal on homepage, not a separate page
+            await page.goto(UNITED_BASE + "/en/us/", wait_until="domcontentloaded", timeout=90000)
+            await asyncio.sleep(3)
 
             mp_number = settings.united_mp_number
             password = settings.united_password
@@ -66,24 +78,22 @@ class UnitedScraper(BaseAirlineScraper):
                     "UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env"
                 )
 
-            # United login uses a modal or inline form — try multiple selectors
-            mp_sel = 'input[name="mpNumber"], input[id*="mpNumber"], input[placeholder*="MileagePlus"], input[aria-label*="MileagePlus"]'
-            mp_field = await page.wait_for_selector(mp_sel, timeout=20000)
-            if mp_field:
-                await mp_field.fill(mp_number)
-            else:
-                raise LoginError("Could not find MileagePlus number field")
+            # Step 1: click "Sign in" in navbar to open login modal
+            signin_btn = page.locator('button:has-text("Sign in")').first
+            await signin_btn.click()
+            await asyncio.sleep(3)
 
-            pw_sel = 'input[name="password"], input[id*="password"], input[type="password"]'
-            pw_field = await page.wait_for_selector(pw_sel, timeout=10000)
-            if pw_field:
-                await pw_field.fill(password)
+            # Step 2: fill form inside the modal
+            mp_field = page.locator('input[name="mpNumber"]')
+            await mp_field.wait_for(state="visible", timeout=15000)
+            await mp_field.fill(mp_number)
 
-            submit_sel = 'button[type="submit"], button:has-text("Sign in"), button:has-text("Sign In")'
-            submit_btn = await page.wait_for_selector(submit_sel, timeout=10000)
-            if submit_btn:
-                await submit_btn.click()
+            pw_field = page.locator('input[name="password"]')
+            await pw_field.fill(password)
 
+            # Step 3: click submit — the dialog's Sign in button is the last one
+            submit_btn = page.locator('button:has-text("Sign in")').last
+            await submit_btn.click()
             await asyncio.sleep(3)
 
             if await self._detect_mfa(page):
