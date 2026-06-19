@@ -55,7 +55,7 @@ class UnitedScraper(BaseAirlineScraper):
     async def _is_logged_in(self, page: Page) -> bool:
         try:
             await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
-            await asyncio.sleep(8)
+            await asyncio.sleep(25)
             content = await page.content()
             # Only check markers that appear only when truly authenticated:
             # "Cardmember" badge, or auth-specific session indicator
@@ -71,7 +71,7 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             # United login is a modal on homepage, not a separate page
             await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
-            await asyncio.sleep(10)
+            await asyncio.sleep(25)
 
             mp_number = settings.united_mp_number
             password = settings.united_password
@@ -81,21 +81,31 @@ class UnitedScraper(BaseAirlineScraper):
                 )
 
             # Step 1: click "Sign in" in navbar to open login modal
-            signin_btn = page.locator('button:has-text("Sign in")').first
-            await signin_btn.click()
+            await page.evaluate("""
+                const btns = document.querySelectorAll('button');
+                for (const b of btns) {
+                    if (b.textContent.trim() === 'Sign in') { b.click(); break; }
+                }
+            """)
             await asyncio.sleep(5)
 
             # Step 2: fill form inside the modal
-            mp_field = page.locator('input[name="mpNumber"]')
-            await mp_field.wait_for(state="visible", timeout=30000)
+            mp_field = page.locator('input[name*="MPID"], input[name*="MileagePlus"], input[name="mpNumber"]').first
+            await mp_field.wait_for(state="visible", timeout=15000)
             await mp_field.fill(mp_number)
 
-            pw_field = page.locator('input[name="password"]')
+            pw_field = page.locator('input[type="password"], input[name="password"]').first
             await pw_field.fill(password)
 
-            # Step 3: click submit — the dialog's Sign in button is the last one
-            submit_btn = page.locator('button:has-text("Sign in")').last
-            await submit_btn.click()
+            # Step 3: click the Sign in button inside the dialog
+            await page.evaluate("""
+                const btns = document.querySelectorAll('button');
+                for (const b of btns) {
+                    if (b.textContent.trim() === 'Sign in' && b.closest('[role="dialog"]')) {
+                        b.click(); break;
+                    }
+                }
+            """)
             await asyncio.sleep(3)
 
             if await self._detect_mfa(page):
@@ -354,8 +364,8 @@ class UnitedScraper(BaseAirlineScraper):
         page.on("response", capture_api)
         try:
             search_url = self._build_search_url(query)
-            await page.goto(search_url, wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(5)
+            await page.goto(search_url, wait_until="commit", timeout=60000)
+            await asyncio.sleep(25)
 
             offers: list[AwardOffer] = []
             for resp in api_responses:

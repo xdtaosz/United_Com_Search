@@ -95,13 +95,17 @@ class BaseAirlineScraper(ABC):
         self._context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "Mozilla/5.0 (X11; Linux x86_64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/149.0.0.0 Safari/537.36"
             ),
             locale="en-US",
             timezone_id="America/New_York",
         )
+        await self._context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            window.chrome = { runtime: {} };
+        """)
         return self._context
 
     async def load_cookies(self) -> bool:
