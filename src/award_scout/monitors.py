@@ -244,7 +244,8 @@ def _send_email(rule: WatchRule, offers: list[AwardOffer]) -> None:
             settings.email_smtp_host, settings.email_smtp_port, context=context, timeout=30
         ) as server:
             server.login(smtp_user, settings.email_smtp_password)
-            server.sendmail(msg["From"], [to_addr], msg.as_string())
+            to_addrs = [a.strip() for a in to_addr.split(",")]
+            server.sendmail(msg["From"], to_addrs, msg.as_string())
         print(f"  Email sent to {to_addr}")
     except Exception as e:
         print(f"  Failed to send email: {e}")
