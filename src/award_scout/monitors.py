@@ -6,7 +6,7 @@ import asyncio
 import random
 import smtplib
 import ssl
-from datetime import date
+from datetime import date, timedelta
 from email.mime.text import MIMEText
 
 import httpx
@@ -44,37 +44,54 @@ async def run_watches() -> None:
 
 
 async def _check_rule(rule: WatchRule) -> list[AwardOffer]:
-    """Run a single calendar search per route (FetchAwardCalendar returns 30 days)."""
+    """Check one watch rule: calendar pre-filter → per-day FetchFlights with delays."""
     start = rule.start_date or date.today()
     end = rule.end_date or date.today()
+    airlines = rule.airlines or ["united"]
 
     all_offers: list[AwardOffer] = []
+    first_airline = True
 
-    for airline in rule.airlines or ["united", "american"]:
+    for airline in airlines:
         try:
-            query = SearchQuery(
-                origin=rule.origin,
-                destination=rule.destination,
-                depart_date=start,
-                cabin=rule.cabin or CabinClass.ECONOMY,
-                airlines=rule.airlines,
-                max_miles=rule.max_miles,
-                max_stops=rule.max_stops,
-            )
-            offers = await _search_airline(airline, query)
-            all_offers.extend(offers)
+            if airline == "united":
+                from award_scout.scrapers.united import UnitedScraper
+
+                async with UnitedScraper() as scraper:
+                    await scraper.login()
+                    offers = await scraper.search_range(
+                        origin=rule.origin,
+                        destination=rule.destination,
+                        start_date=start,
+                        end_date=end,
+                        cabin=rule.cabin or CabinClass.ECONOMY,
+                        max_miles=rule.max_miles,
+                    )
+                    all_offers.extend(offers)
+            else:
+                # Other airlines: fallback to single-date search with delay
+                current = start
+                while current <= end:
+                    query = SearchQuery(
+                        origin=rule.origin,
+                        destination=rule.destination,
+                        depart_date=current,
+                        cabin=rule.cabin or CabinClass.ECONOMY,
+                        max_miles=rule.max_miles,
+                    )
+                    offers = await _search_airline(airline, query)
+                    all_offers.extend(offers)
+                    current += timedelta(days=1)
         except Exception:
             pass
 
-        if len(rule.airlines or ["united"]) > 1:
+        if not first_airline and len(airlines) > 1:
             base = settings.search_delay_seconds
             jitter = random.uniform(0, base * 0.5)
             await asyncio.sleep(base + jitter)
+        first_airline = False
 
-    # Filter by date range
-    start_str = start.isoformat()
-    end_str = end.isoformat()
-    return [o for o in all_offers if start_str <= o.depart_date <= end_str]
+    return all_offers
 
 
 async def _search_airline(airline: str, query: SearchQuery) -> list[AwardOffer]:

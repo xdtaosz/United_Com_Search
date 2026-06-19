@@ -144,38 +144,105 @@ class UnitedScraper(BaseAirlineScraper):
     # --- Search ---
 
     async def search(self, query: SearchQuery) -> list[AwardOffer]:
+        """Search a single date. Uses FetchFlights for detailed results."""
         if not await self.login():
             raise LoginError("Cannot search without successful login")
 
         if self._bearer_token:
-            offers = await self._search_via_api(query)
+            offers = await self._search_single_date(query)
             if offers:
                 self.touch_session()
                 return offers
 
         return await self._search_via_browser(query)
 
+    async def get_available_dates(
+        self,
+        origin: str,
+        destination: str,
+        cabin: CabinClass,
+        start_date: date,
+        max_miles: int | None = None,
+    ) -> set[date]:
+        """Call FetchAwardCalendar once, return dates with award availability."""
+        query = SearchQuery(origin=origin, destination=destination, depart_date=start_date, cabin=cabin)
+        payload = self._build_api_payload(query, calendar_length_of_stay=-1)
+        cookies = self._session.get_cookies_httpx(self.airline_name) or {}
+        headers = self._api_headers()
+
+        try:
+            async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
+                resp = await client.post(UNITED_FETCH_AWARD_CALENDAR, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return self._parse_calendar_dates(data, max_miles)
+        except Exception:
+            pass
+        return set()
+
+    async def search_range(
+        self,
+        origin: str,
+        destination: str,
+        start_date: date,
+        end_date: date,
+        cabin: CabinClass,
+        max_miles: int | None = None,
+    ) -> list[AwardOffer]:
+        """Calendar pre-filter → per-day FetchFlights with delays."""
+        # Stage 1: calendar overview
+        available = await self.get_available_dates(origin, destination, cabin, start_date, max_miles)
+        if not available:
+            return []
+
+        # Stage 2: FetchFlights per qualifying date
+        all_offers: list[AwardOffer] = []
+        current = start_date
+        while current <= end_date:
+            if current not in available:
+                current += timedelta(days=1)
+                continue
+
+            query = SearchQuery(
+                origin=origin, destination=destination, depart_date=current, cabin=cabin,
+            )
+            offers = await self._search_single_date(query)
+            all_offers.extend(offers)
+            current += timedelta(days=1)
+            if current <= end_date:
+                await _rate_limit_pause()
+
+        return all_offers
+
     def _probe_search_url(self) -> str:
-        """Build a minimal award search URL that triggers FetchAwardCalendar."""
         params = {
-            "f": "SFO",
-            "t": "ORD",
+            "f": "SFO", "t": "ORD",
             "d": date.today().strftime("%Y/%m/%d"),
-            "tt": "1",
-            "at": "1",
-            "sc": "3",
-            "act": "2",
-            "px": "1",
-            "tqp": "A",
+            "tt": "1", "at": "1", "sc": "3", "act": "2", "px": "1", "tqp": "A",
         }
         return f"{UNITED_FSR_SEARCH}?{urllib.parse.urlencode(params)}"
 
-    # --- API-first search (httpx) ---
+    # --- API helpers ---
 
-    async def _search_via_api(self, query: SearchQuery) -> list[AwardOffer]:
-        await _rate_limit_pause()
+    async def _search_single_date(self, query: SearchQuery) -> list[AwardOffer]:
+        """FetchFlights for a single specific date."""
+        payload = self._build_api_payload(query, calendar_length_of_stay=0)
         cookies = self._session.get_cookies_httpx(self.airline_name) or {}
-        headers = {
+        headers = self._api_headers()
+
+        try:
+            async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
+                resp = await client.post(UNITED_FETCH_FLIGHTS, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("Status") == 200:
+                        return self._parse_fetch_response(data, query)
+        except Exception:
+            pass
+        return []
+
+    def _api_headers(self) -> dict[str, str]:
+        return {
             "Content-Type": "application/json",
             "x-authorization-api": f"bearer {self._bearer_token}",
             "Origin": UNITED_BASE,
@@ -186,23 +253,7 @@ class UnitedScraper(BaseAirlineScraper):
             ),
         }
 
-        payload = self._build_api_payload(query)
-        try:
-            async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
-                resp = await client.post(
-                    UNITED_FETCH_AWARD_CALENDAR,
-                    json=payload,
-                    headers=headers,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("Status") == 200:
-                        return self._parse_fetch_award_calendar(data, query)
-        except Exception:
-            pass
-        return []
-
-    def _build_api_payload(self, query: SearchQuery) -> dict[str, Any]:
+    def _build_api_payload(self, query: SearchQuery, calendar_length_of_stay: int = -1) -> dict[str, Any]:
         is_business = query.cabin in (CabinClass.BUSINESS, CabinClass.FIRST)
         fare_family = "BUSINESS" if is_business else "ECO"
         cabin_main = "premium" if is_business else "eco"
@@ -233,7 +284,7 @@ class UnitedScraper(BaseAirlineScraper):
             "PaxInfoList": [{"PaxType": 1}],
             "AwardTravel": True,
             "NGRP": True,
-            "CalendarLengthOfStay": -1,
+            "CalendarLengthOfStay": calendar_length_of_stay,
             "PetCount": 0,
             "FareType": "mixedtoggle",
             "BuildHashValue": "true",
@@ -265,7 +316,7 @@ class UnitedScraper(BaseAirlineScraper):
 
             offers: list[AwardOffer] = []
             for resp in api_responses:
-                parsed = self._parse_fetch_award_calendar(resp, query)
+                parsed = self._parse_fetch_response(resp, query)
                 offers.extend(parsed)
             return offers
         finally:
@@ -292,7 +343,30 @@ class UnitedScraper(BaseAirlineScraper):
 
     # --- Response Parsing ---
 
-    def _parse_fetch_award_calendar(
+    @staticmethod
+    def _parse_calendar_dates(data: dict[str, Any], max_miles: int | None = None) -> set[date]:
+        """Extract dates with award availability from FetchAwardCalendar response."""
+        dates: set[date] = set()
+        d = data.get("data", data)
+        for trip in d.get("Trips", []):
+            for flight in trip.get("Flights", []):
+                products = flight.get("Products") or flight.get("Fares") or []
+                for prod in products:
+                    miles = int(prod.get("AwardMiles", prod.get("Miles", 0)) or 0)
+                    if miles == 0:
+                        continue
+                    if max_miles is not None and miles > max_miles:
+                        continue
+                    dep = flight.get("DepartDateTime", "")
+                    if dep:
+                        try:
+                            dates.add(date.fromisoformat(dep[:10]))
+                        except ValueError:
+                            pass
+                    break  # one product per day is enough for availability check
+        return dates
+
+    def _parse_fetch_response(
         self, data: dict[str, Any], query: SearchQuery
     ) -> list[AwardOffer]:
         offers: list[AwardOffer] = []
@@ -377,18 +451,10 @@ class UnitedScraper(BaseAirlineScraper):
         end_date: date,
         cabin: CabinClass = CabinClass.ECONOMY,
     ) -> dict[str, list[AwardOffer]]:
+        offers = await self.search_range(origin, destination, start_date, end_date, cabin)
         results: dict[str, list[AwardOffer]] = {}
-        current = start_date
-        while current <= end_date:
-            query = SearchQuery(
-                origin=origin,
-                destination=destination,
-                depart_date=current,
-                cabin=cabin,
-            )
-            offers = await self.search(query)
-            results[current.isoformat()] = offers
-            current += timedelta(days=1)
+        for o in offers:
+            results.setdefault(o.depart_date, []).append(o)
         return results
 
 
