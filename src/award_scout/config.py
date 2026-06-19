@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     browser_timeout_ms: int = 60_000
 
     # --- Monitoring ---
-    watch_interval_minutes: int = 120
+    watch_interval_minutes: int = 240
 
     # --- Rate limiting (anti-ban) ---
     search_delay_seconds: float = 8.0
@@ -63,19 +63,19 @@ class Settings(BaseSettings):
         return self.data_path / "awards.db"
 
     @property
-    def sessions_dir(self) -> Path:
-        d = self.data_path / "sessions"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    @property
-    def logs_dir(self) -> Path:
-        d = self.data_path / "logs"
+    def cookies_dir(self) -> Path:
+        d = self.data_path / "cookies"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def cookie_path(self, airline: str) -> Path:
         return self.cookies_dir / f"{airline}_cookies.json"
+
+    @property
+    def sessions_dir(self) -> Path:
+        d = self.data_path / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     @property
     def logs_dir(self) -> Path:

@@ -57,7 +57,7 @@ class UnitedScraper(BaseAirlineScraper):
 
         try:
             await page.goto(UNITED_LOGIN, wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
             mp_number = settings.united_mp_number
             password = settings.united_password
@@ -66,25 +66,21 @@ class UnitedScraper(BaseAirlineScraper):
                     "UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env"
                 )
 
-            mp_field = await page.wait_for_selector(
-                'input[name="mpNumber"], input[data-test="mpNumber-input"], #mpNumber',
-                timeout=15000,
-            )
+            # United login uses a modal or inline form — try multiple selectors
+            mp_sel = 'input[name="mpNumber"], input[id*="mpNumber"], input[placeholder*="MileagePlus"], input[aria-label*="MileagePlus"]'
+            mp_field = await page.wait_for_selector(mp_sel, timeout=20000)
             if mp_field:
                 await mp_field.fill(mp_number)
             else:
                 raise LoginError("Could not find MileagePlus number field")
 
-            pw_field = await page.wait_for_selector(
-                'input[name="password"], input[data-test="password-input"], #password',
-                timeout=5000,
-            )
+            pw_sel = 'input[name="password"], input[id*="password"], input[type="password"]'
+            pw_field = await page.wait_for_selector(pw_sel, timeout=10000)
             if pw_field:
                 await pw_field.fill(password)
 
-            submit_btn = await page.wait_for_selector(
-                'button[type="submit"], button[data-test="sign-in-button"]', timeout=5000
-            )
+            submit_sel = 'button[type="submit"], button:has-text("Sign in"), button:has-text("Sign In")'
+            submit_btn = await page.wait_for_selector(submit_sel, timeout=10000)
             if submit_btn:
                 await submit_btn.click()
 
@@ -392,10 +388,14 @@ class UnitedScraper(BaseAirlineScraper):
             for flight in trip.get("Flights", []):
                 products = flight.get("Products") or flight.get("Fares") or []
                 for prod in products:
-                    miles = int(prod.get("AwardMiles", prod.get("Miles", 0)) or 0)
+                    ctx = prod.get("Context", {})
+                    ngrp_miles = int(ctx.get("NgrpMiles", 0) or 0)
+                    pax_prices = ctx.get("PaxPrices", [])
+                    pax_miles = int(pax_prices[0].get("Miles", 0) if pax_prices else 0)
+                    miles = ngrp_miles or pax_miles
                     if miles == 0:
                         continue
-                    cash = float(prod.get("Cash", prod.get("TotalPrice", 0)) or 0)
+                    cash = float((ctx.get("ReferenceFare") or {}).get("Amount", 0) or 0)
                     dep = flight.get("DepartDateTime", "")
                     if not dep:
                         continue
@@ -428,14 +428,19 @@ class UnitedScraper(BaseAirlineScraper):
                 )
                 segments = self._parse_flight_segments(flight)
                 for prod in products:
-                    miles = int(prod.get("AwardMiles", prod.get("Miles", 0)) or 0)
+                    ctx = prod.get("Context", {})
+                    pax_prices = ctx.get("PaxPrices", [])
+                    ngrp_miles = int(ctx.get("NgrpMiles", 0) or 0)
+                    pax_miles = int(pax_prices[0].get("Miles", 0) if pax_prices else 0)
+                    miles = ngrp_miles or pax_miles
                     if miles == 0:
                         continue
-                    taxes = float(prod.get("Cash", prod.get("TotalPrice", 0)) or 0)
-                    cabin_str = prod.get("Cabin", prod.get("CabinType", "Economy"))
+                    ref_fare = ctx.get("ReferenceFare", {})
+                    taxes = float(ref_fare.get("Amount", 0) or 0)
+                    cabin_str = prod.get("CabinType", "Economy")
                     cabin = CabinClass.from_united_code(cabin_str)
-                    seats = prod.get("SeatsRemaining", prod.get("AvailableSeats", 1))
-                    fare_class = prod.get("FareClass", prod.get("BookingCode", ""))
+                    fare_class = prod.get("BookingCode", "")
+                    seats = _parse_seats(flight.get("BookingClassAvailability", ""), fare_class)
                     total_dur = sum(s.duration_minutes for s in segments) if segments else 0
                     stops = len(segments) - 1 if segments else 0
 
@@ -518,3 +523,18 @@ def _short_time(iso_str: str) -> str:
     if "T" in iso_str:
         return iso_str[11:16]
     return iso_str[:5]
+
+
+def _parse_seats(availability: str, fare_class: str) -> int:
+    """Extract seat count from BookingClassAvailability string.
+    Format: 'J9|JN9|C9|...|XN4|X0' → for XN, returns 4.
+    """
+    if not availability or not fare_class:
+        return 0
+    for part in availability.split("|"):
+        if part.startswith(fare_class) and len(part) > len(fare_class):
+            try:
+                return int(part[len(fare_class):])
+            except ValueError:
+                pass
+    return 0

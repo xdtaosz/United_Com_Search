@@ -19,8 +19,11 @@ class CabinClass(str, Enum):
     def from_united_code(cls, code: str) -> "CabinClass":
         mapping = {
             "economy": cls.ECONOMY,
+            "coach": cls.ECONOMY,
             "premium": cls.PREMIUM_ECONOMY,
+            "premium_economy": cls.PREMIUM_ECONOMY,
             "business": cls.BUSINESS,
+            "businessfirst": cls.BUSINESS,
             "first": cls.FIRST,
         }
         return mapping.get(code.lower(), cls.ECONOMY)
