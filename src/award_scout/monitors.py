@@ -111,6 +111,7 @@ async def _search_airline(airline: str, query: SearchQuery) -> list[AwardOffer]:
 
 def _match_rule(offers: list[AwardOffer], rule: WatchRule) -> list[AwardOffer]:
     """Filter offers that match a watch rule's criteria."""
+    EXCLUDE_AIRPORTS = {"MNL"}  # Exclude Manila connections
     matched = offers
 
     if rule.max_miles is not None:
@@ -119,6 +120,11 @@ def _match_rule(offers: list[AwardOffer], rule: WatchRule) -> list[AwardOffer]:
         matched = [o for o in matched if o.stops <= rule.max_stops]
     if rule.cabin:
         matched = [o for o in matched if o.cabin == rule.cabin]
+    # Exclude flights transiting through blocked airports
+    matched = [o for o in matched if not any(
+        s.departure_airport in EXCLUDE_AIRPORTS or s.arrival_airport in EXCLUDE_AIRPORTS
+        for s in o.segments
+    )]
 
     return sorted(matched, key=lambda o: o.miles_required)
 

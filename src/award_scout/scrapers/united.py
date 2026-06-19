@@ -492,13 +492,14 @@ class UnitedScraper(BaseAirlineScraper):
         return offers
 
     @staticmethod
+    @staticmethod
     def _parse_flight_segments(flight: dict[str, Any]) -> list[FlightSegment]:
         segments: list[FlightSegment] = []
         conns = flight.get("Connections", [])
+        dep_dt = flight.get("DepartDateTime", "")
+        arr_dt = flight.get("DestinationDateTime", "")
+
         if not conns:
-            # Nonstop: build single segment from flight-level fields
-            dep_dt = flight.get("DepartDateTime", "")
-            arr_dt = flight.get("DestinationDateTime", "")
             segments.append(FlightSegment(
                 airline=flight.get("MarketingCarrier", ""),
                 flight_number=str(flight.get("FlightNumber", "")),
@@ -510,10 +511,23 @@ class UnitedScraper(BaseAirlineScraper):
                 aircraft=flight.get("Equipment", ""),
             ))
         else:
+            # First leg: Origin → first connection
+            first_conn = conns[0]
+            segments.append(FlightSegment(
+                airline=flight.get("MarketingCarrier", ""),
+                flight_number=str(flight.get("FlightNumber", "")),
+                departure_airport=flight.get("Origin", ""),
+                arrival_airport=first_conn.get("Origin", ""),
+                departure_time=dep_dt,
+                arrival_time=first_conn.get("DepartureTime", first_conn.get("DepartDateTime", "")),
+                duration_minutes=0,
+                aircraft=flight.get("Equipment", ""),
+            ))
+            # Remaining legs: connections
             for c in conns:
                 segments.append(FlightSegment(
-                    airline=c.get("Carrier", ""),
-                    flight_number=str(c.get("FlightNumber", "")),
+                    airline=c.get("Carrier", flight.get("MarketingCarrier", "")),
+                    flight_number=str(c.get("FlightNumber", flight.get("FlightNumber", ""))),
                     departure_airport=c.get("Origin", ""),
                     arrival_airport=c.get("Destination", ""),
                     departure_time=c.get("DepartureTime", c.get("DepartDateTime", "")),
