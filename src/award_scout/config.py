@@ -63,8 +63,14 @@ class Settings(BaseSettings):
         return self.data_path / "awards.db"
 
     @property
-    def cookies_dir(self) -> Path:
-        d = self.data_path / "cookies"
+    def sessions_dir(self) -> Path:
+        d = self.data_path / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @property
+    def logs_dir(self) -> Path:
+        d = self.data_path / "logs"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -72,8 +78,8 @@ class Settings(BaseSettings):
         return self.cookies_dir / f"{airline}_cookies.json"
 
     @property
-    def sessions_dir(self) -> Path:
-        d = self.data_path / "sessions"
+    def logs_dir(self) -> Path:
+        d = self.data_path / "logs"
         d.mkdir(parents=True, exist_ok=True)
         return d
 

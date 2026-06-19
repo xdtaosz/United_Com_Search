@@ -18,6 +18,7 @@ from award_scout.models import (
     SearchQuery,
 )
 from award_scout.scrapers.base import BaseAirlineScraper, LoginError, MFARequired
+from award_scout.search_logger import SearchLogger
 
 UNITED_BASE = "https://www.united.com"
 UNITED_LOGIN = f"{UNITED_BASE}/en/us/login"
@@ -163,22 +164,28 @@ class UnitedScraper(BaseAirlineScraper):
         cabin: CabinClass,
         start_date: date,
         max_miles: int | None = None,
-    ) -> set[date]:
-        """Call FetchAwardCalendar once, return dates with award availability."""
+    ) -> dict[date, tuple[int, float]]:
+        """Call FetchAwardCalendar once, return dates→(miles, cash) with availability."""
         query = SearchQuery(origin=origin, destination=destination, depart_date=start_date, cabin=cabin)
         payload = self._build_api_payload(query, calendar_length_of_stay=-1)
         cookies = self._session.get_cookies_httpx(self.airline_name) or {}
         headers = self._api_headers()
+
+        log = SearchLogger()
+        route = f"{origin.upper()}→{destination.upper()}"
+        log.stage1_start(route, cabin.value, f"{start_date} +30d")
 
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
                 resp = await client.post(UNITED_FETCH_AWARD_CALENDAR, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
-                    return self._parse_calendar_dates(data, max_miles)
-        except Exception:
-            pass
-        return set()
+                    result = self._parse_calendar_dates(data, max_miles, log)
+                    log.stage1_summary(len(result), 30)
+                    return result
+        except Exception as e:
+            log.error("calendar_fetch", str(e)[:120])
+        return {}
 
     async def search_range(
         self,
@@ -196,6 +203,7 @@ class UnitedScraper(BaseAirlineScraper):
             return []
 
         # Stage 2: FetchFlights per qualifying date
+        log = SearchLogger()
         all_offers: list[AwardOffer] = []
         current = start_date
         while current <= end_date:
@@ -203,16 +211,43 @@ class UnitedScraper(BaseAirlineScraper):
                 current += timedelta(days=1)
                 continue
 
+            log.stage2_start(current.isoformat())
             query = SearchQuery(
                 origin=origin, destination=destination, depart_date=current, cabin=cabin,
             )
             offers = await self._search_single_date(query)
-            all_offers.extend(offers)
+            if offers:
+                all_offers.extend(offers)
+                self._log_stage2_flights(log, offers)
+                log.stage2_summary(current.isoformat(), len(offers))
+            else:
+                log.stage2_empty(current.isoformat())
+
             current += timedelta(days=1)
             if current <= end_date:
                 await _rate_limit_pause()
 
         return all_offers
+
+    @staticmethod
+    def _log_stage2_flights(log: SearchLogger, offers: list[AwardOffer]) -> None:
+        for o in offers:
+            for seg in o.segments:
+                route = f"{seg.departure_airport}→{seg.arrival_airport}"
+                times = f"{_short_time(seg.departure_time)}–{_short_time(seg.arrival_time)}"
+                dur = f"{seg.duration_minutes // 60}h{seg.duration_minutes % 60}m"
+                log.stage2_flight(
+                    flight_num=seg.flight_number,
+                    route=route,
+                    times=times,
+                    duration=dur,
+                    stops=o.stops,
+                    miles=o.miles_required,
+                    cash=o.taxes_fees,
+                    cabin=o.cabin.value,
+                    seats=o.total_seats_available,
+                    fare_class=seg.fare_class or "",
+                )
 
     def _probe_search_url(self) -> str:
         params = {
@@ -344,9 +379,14 @@ class UnitedScraper(BaseAirlineScraper):
     # --- Response Parsing ---
 
     @staticmethod
-    def _parse_calendar_dates(data: dict[str, Any], max_miles: int | None = None) -> set[date]:
-        """Extract dates with award availability from FetchAwardCalendar response."""
-        dates: set[date] = set()
+    def _parse_calendar_dates(
+        data: dict[str, Any],
+        max_miles: int | None = None,
+        log: SearchLogger | None = None,
+    ) -> dict[date, tuple[int, float]]:
+        """Extract dates with award availability from FetchAwardCalendar response.
+        Returns {date: (miles, cash)}."""
+        dates: dict[date, tuple[int, float]] = {}
         d = data.get("data", data)
         for trip in d.get("Trips", []):
             for flight in trip.get("Flights", []):
@@ -355,14 +395,21 @@ class UnitedScraper(BaseAirlineScraper):
                     miles = int(prod.get("AwardMiles", prod.get("Miles", 0)) or 0)
                     if miles == 0:
                         continue
-                    if max_miles is not None and miles > max_miles:
-                        continue
+                    cash = float(prod.get("Cash", prod.get("TotalPrice", 0)) or 0)
                     dep = flight.get("DepartDateTime", "")
-                    if dep:
-                        try:
-                            dates.add(date.fromisoformat(dep[:10]))
-                        except ValueError:
-                            pass
+                    if not dep:
+                        continue
+                    try:
+                        d_date = date.fromisoformat(dep[:10])
+                    except ValueError:
+                        continue
+                    if max_miles is not None and miles > max_miles:
+                        if log:
+                            log.stage1_miss(dep[:10], miles)
+                        continue
+                    dates[d_date] = (miles, cash)
+                    if log:
+                        log.stage1_hit(dep[:10], miles, cash)
                     break  # one product per day is enough for availability check
         return dates
 
@@ -462,3 +509,12 @@ async def _rate_limit_pause() -> None:
     base_delay = settings.search_delay_seconds
     jitter = random.uniform(0, base_delay * 0.5)
     await asyncio.sleep(base_delay + jitter)
+
+
+def _short_time(iso_str: str) -> str:
+    """Extract HH:MM from ISO8601 or raw time string."""
+    if not iso_str:
+        return "?"
+    if "T" in iso_str:
+        return iso_str[11:16]
+    return iso_str[:5]
