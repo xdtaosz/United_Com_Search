@@ -94,15 +94,17 @@ class UnitedScraper(BaseAirlineScraper):
             await mp_field.wait_for(state="visible", timeout=15000)
             await mp_field.fill(mp_number)
 
-            # Step 2b: click Continue to advance to password step (two-step form)
+            # Step 2b: try Continue if needed (two-step form), then fill password
             continue_btn = page.locator('button:has-text("Continue")').first
-            if await continue_btn.count() > 0 and await continue_btn.is_visible():
-                await continue_btn.click()
-                await asyncio.sleep(3)
+            try:
+                if await continue_btn.is_visible():
+                    await continue_btn.click()
+                    await asyncio.sleep(3)
+            except Exception:
+                pass
 
-            # Step 2c: now the password field appears
             pw_field = page.locator('input[type="password"], input[name*="password"], input[name*="Password"]').first
-            await pw_field.wait_for(state="visible", timeout=15000)
+            await pw_field.wait_for(state="visible", timeout=30000)
             await pw_field.fill(password)
 
             # Step 3: click the Sign in button inside the dialog
