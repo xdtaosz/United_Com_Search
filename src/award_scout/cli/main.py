@@ -261,6 +261,21 @@ def unwatch(watch_id: str = typer.Argument(..., help="Watch rule ID to remove"))
 
 # --- Login ---
 
+# --- Web ---
+
+@app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Bind address"),
+    port: int = typer.Option(8080, "--port", "-p", help="Port number"),
+):
+    """Start the local web interface for award search."""
+    from award_scout.web.app import run
+
+    console.print(f"[green]✓[/green] Award Scout web interface starting at http://{host}:{port}")
+    console.print("[dim]  Open this URL in your browser.[/dim]")
+    run(host=host, port=port)
+
+
 @app.command()
 def login(
     airline: str = typer.Argument(..., help="Airline to login: united, american, delta, alaska"),
