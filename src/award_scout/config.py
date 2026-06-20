@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     watch_interval_minutes: int = 240
 
     # --- Rate limiting (anti-ban) ---
-    search_delay_seconds: float = 15.0
+    search_delay_seconds: float = 60.0
 
     # --- Notifications: ntfy.sh ---
     ntfy_topic: Optional[str] = None

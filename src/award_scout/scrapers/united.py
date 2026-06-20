@@ -411,13 +411,16 @@ class UnitedScraper(BaseAirlineScraper):
         log: SearchLogger | None = None,
     ) -> dict[date, tuple[int, float]]:
         """Extract dates with award availability from FetchAwardCalendar response.
-        Returns {date: (miles, cash)}."""
+        Returns {date: (miles, cash)}. Only includes Business/First cabins."""
         dates: dict[date, tuple[int, float]] = {}
         d = data.get("data", data)
         for trip in d.get("Trips", []):
             for flight in trip.get("Flights", []):
                 products = flight.get("Products") or flight.get("Fares") or []
                 for prod in products:
+                    cabin_type = prod.get("CabinType", "")
+                    if cabin_type not in ("Business", "BusinessFirst"):
+                        continue
                     ctx = prod.get("Context", {})
                     ngrp_miles = int(ctx.get("NgrpMiles", 0) or 0)
                     pax_prices = ctx.get("PaxPrices", [])
