@@ -12,19 +12,14 @@ from typing import Annotated, Any, Optional
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
-from jinja2 import Environment, FileSystemLoader
+from fastapi.templating import Jinja2Templates
 
 from award_scout.config import settings
 from award_scout.models import CabinClass, SearchQuery
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 app = FastAPI(title="Award Scout")
-jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
-
-
-def _render(template_name: str, **ctx) -> HTMLResponse:
-    template = jinja_env.get_template(template_name)
-    return HTMLResponse(template.render(**ctx))
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 CABIN_CHOICES = [
     ("business", "Business"),
@@ -164,13 +159,16 @@ def _send_results_email(
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
+async def index(request: Request):
     today = date.today()
-    return _render(
+    return templates.TemplateResponse(
         "index.html",
-        cabins=CABIN_CHOICES,
-        default_start=today.isoformat(),
-        default_end=today.replace(day=28).isoformat() if today.month != 2 else today.replace(day=28).isoformat(),
+        {
+            "request": request,
+            "cabins": CABIN_CHOICES,
+            "default_start": today.isoformat(),
+            "default_end": today.replace(day=28).isoformat() if today.month != 2 else today.replace(day=28).isoformat(),
+        },
     )
 
 
@@ -198,19 +196,25 @@ async def search(
     results = _run_scraper(params)
 
     if isinstance(results, dict) and "error" in results:
-        return _render(
+        return templates.TemplateResponse(
             "results.html",
-            error=results["error"],
-            params=params,
-            results=[],
-            cabins=CABIN_CHOICES,
+            {
+                "request": request,
+                "error": results["error"],
+                "params": params,
+                "results": [],
+                "cabins": CABIN_CHOICES,
+            },
         )
 
-    return _render(
+    return templates.TemplateResponse(
         "results.html",
-        params=params,
-        results=results,
-        cabins=CABIN_CHOICES,
+        {
+            "request": request,
+            "params": params,
+            "results": results,
+            "cabins": CABIN_CHOICES,
+        },
     )
 
 
@@ -241,13 +245,16 @@ async def email_results(
     to = email_to or settings.email_to
     ok = _send_results_email(to, results, params)
 
-    return _render(
+    return templates.TemplateResponse(
         "results.html",
-        params=params,
-        results=results,
-        cabins=CABIN_CHOICES,
-        email_sent=ok,
-        email_error="" if ok else "SMTP failed. Check credentials.",
+        {
+            "request": request,
+            "params": params,
+            "results": results,
+            "cabins": CABIN_CHOICES,
+            "email_sent": ok,
+            "email_error": "" if ok else "SMTP failed. Check credentials.",
+        },
     )
 
 
