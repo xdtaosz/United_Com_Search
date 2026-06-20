@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<p>Login complete. Redirecting to search...</p>
+<form id="f" action="{{ action }}" method="post">
+  {% for key, value in fields.items() %}
+  <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {% endfor %}
+</form>
+<script>document.getElementById('f').submit();</script>
+</body>
+</html>
