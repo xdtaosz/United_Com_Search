@@ -188,7 +188,7 @@ async def search(
         "exclude_airports": exclude_airports,
     }
 
-    results = await _run_scraper(params)
+    results = _run_scraper(params)
 
     if isinstance(results, dict) and "error" in results:
         return _render(
