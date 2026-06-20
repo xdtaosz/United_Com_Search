@@ -34,73 +34,66 @@ CABIN_CHOICES = [
 ]
 
 
-def _run_scraper(search_params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Run the United scraper synchronously and return offer dicts."""
+async def _run_scraper(search_params: dict[str, Any]) -> list[dict[str, Any]] | dict[str, str]:
+    """Run the United scraper and return offer dicts."""
     from award_scout.scrapers.united import UnitedScraper
 
-    async def _search():
-        async with UnitedScraper() as scraper:
-            ok = await scraper.login()
-            if not ok:
-                return {"error": "Login failed. Run 'award-scout login united' first."}
+    async with UnitedScraper() as scraper:
+        ok = await scraper.login()
+        if not ok:
+            return {"error": "Login failed. Run 'award-scout login united' first."}
 
-            cabin = CabinClass(search_params.get("cabin", "business"))
-            exclude = {
-                a.strip().upper()
-                for a in search_params.get("exclude_airports", "").split(",")
-                if a.strip()
-            }
+        cabin = CabinClass(search_params.get("cabin", "business"))
+        exclude = {
+            a.strip().upper()
+            for a in search_params.get("exclude_airports", "").split(",")
+            if a.strip()
+        }
 
-            offers = await scraper.search_range(
-                origin=search_params["origin"].upper(),
-                destination=search_params["destination"].upper(),
-                start_date=search_params["start_date"],
-                end_date=search_params["end_date"],
-                cabin=cabin,
-                max_miles=search_params.get("max_miles"),
-            )
+        offers = await scraper.search_range(
+            origin=search_params["origin"].upper(),
+            destination=search_params["destination"].upper(),
+            start_date=search_params["start_date"],
+            end_date=search_params["end_date"],
+            cabin=cabin,
+            max_miles=search_params.get("max_miles"),
+        )
 
-            results = []
-            for o in offers:
-                # Apply exclude filter
-                if exclude and any(
-                    s.departure_airport in exclude or s.arrival_airport in exclude
-                    for s in o.segments
-                ):
-                    continue
+        results = []
+        for o in offers:
+            if exclude and any(
+                s.departure_airport in exclude or s.arrival_airport in exclude
+                for s in o.segments
+            ):
+                continue
 
-                segments = []
-                for s in o.segments:
-                    dep = s.departure_time[:16] if s.departure_time else "?"
-                    arr = s.arrival_time[:16] if s.arrival_time else "?"
-                    segments.append(
-                        f"{s.airline}{s.flight_number} {s.departure_airport}→{s.arrival_airport} {dep}–{arr}"
-                    )
-
-                dur_h = o.total_duration_minutes // 60
-                dur_m = o.total_duration_minutes % 60
-
-                results.append(
-                    {
-                        "date": o.depart_date,
-                        "stops": o.stops,
-                        "duration": f"{dur_h}h{dur_m}m",
-                        "cabin": o.cabin.value.title(),
-                        "miles": o.miles_required,
-                        "taxes": o.taxes_fees,
-                        "seats": o.total_seats_available,
-                        "segments": " | ".join(segments),
-                        "stops_label": "nonstop" if o.stops == 0 else f"{o.stops} stop(s)",
-                    }
+            segments_list = []
+            for s in o.segments:
+                dep = s.departure_time[:16] if s.departure_time else "?"
+                arr = s.arrival_time[:16] if s.arrival_time else "?"
+                segments_list.append(
+                    f"{s.airline}{s.flight_number} {s.departure_airport}→{s.arrival_airport} {dep}–{arr}"
                 )
 
-            results.sort(key=lambda r: r["miles"])
-            return results
+            dur_h = o.total_duration_minutes // 60
+            dur_m = o.total_duration_minutes % 60
 
-    result = asyncio.run(_search())
-    if isinstance(result, dict) and "error" in result:
-        return result
-    return result
+            results.append(
+                {
+                    "date": o.depart_date,
+                    "stops": o.stops,
+                    "duration": f"{dur_h}h{dur_m}m",
+                    "cabin": o.cabin.value.title(),
+                    "miles": o.miles_required,
+                    "taxes": o.taxes_fees,
+                    "seats": o.total_seats_available,
+                    "segments": " | ".join(segments_list),
+                    "stops_label": "nonstop" if o.stops == 0 else f"{o.stops} stop(s)",
+                }
+            )
+
+        results.sort(key=lambda r: r["miles"])
+        return results
 
 
 def _send_results_email(
