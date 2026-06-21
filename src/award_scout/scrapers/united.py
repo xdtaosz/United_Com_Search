@@ -298,20 +298,29 @@ class UnitedScraper(BaseAirlineScraper):
 
             # Enable Flexible dates + click Update to trigger calendar API
             flex = page.locator('input[name="Flexible"]')
-            if await flex.count() > 0:
-                await flex.check()
-                print(f"  [CALENDAR] Flexible dates enabled")
-                await asyncio.sleep(1)
+            update = page.locator('button:has-text("Update")').first
+            has_flex = await flex.count() > 0
+            has_update = await update.count() > 0 and await update.is_visible()
 
-            async with page.expect_response(
-                lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
-                timeout=45000
-            ) as resp_info:
-                update = page.locator('button:has-text("Update")').first
-                if await update.count() > 0 and await update.is_visible():
+            if has_flex and has_update:
+                await flex.check()
+                print(f"  [CALENDAR] Flexible dates enabled, clicking Update...")
+                async with page.expect_response(
+                    lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
+                    timeout=45000
+                ) as resp_info:
                     await update.click()
-                    print(f"  [CALENDAR] Update clicked, waiting for calendar...")
-            resp = await resp_info.value
+                resp = await resp_info.value
+            else:
+                # Page may have auto-triggered calendar on load
+                print(f"  [CALENDAR] waiting for auto-triggered calendar...")
+                async with page.expect_response(
+                    lambda r: r.status == 200 and ('FetchAwardCalendar' in r.url),
+                    timeout=30000
+                ) as resp_info:
+                    pass
+                resp = await resp_info.value
+
             data = await resp.json()
             result = self._parse_calendar_dates(data, max_miles, log)
             log.stage1_summary(len(result), 30)
