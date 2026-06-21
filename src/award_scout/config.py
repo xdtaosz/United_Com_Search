@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # --- Browser ---
     headless: bool = True
     browser_timeout_ms: int = 60_000
+    browser_type: str = "chromium"  # chromium or firefox
 
     # --- Monitoring ---
     watch_origin: Optional[str] = None

@@ -88,24 +88,37 @@ class BaseAirlineScraper(ABC):
         if self._context and not self._context.is_closed():
             return self._context
         self._playwright = await async_playwright().start()
-        browser = await self._playwright.chromium.launch(
-            headless=settings.headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
-            executable_path=_find_chrome(),
-        )
-        self._context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/149.0.0.0 Safari/537.36"
-            ),
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
+
+        if settings.browser_type == "firefox":
+            browser = await self._playwright.firefox.launch(
+                headless=settings.headless,
+                firefox_user_prefs={"dom.webdriver.enabled": False},
+            )
+            self._context = await browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
+        else:
+            browser = await self._playwright.chromium.launch(
+                headless=settings.headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+                executable_path=_find_chrome(),
+            )
+            self._context = await browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                user_agent=(
+                    "Mozilla/5.0 (X11; Linux x86_64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/149.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
         await self._context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
             window.chrome = { runtime: {} };
