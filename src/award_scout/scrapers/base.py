@@ -89,33 +89,25 @@ class BaseAirlineScraper(ABC):
             return self._context
         self._playwright = await async_playwright().start()
 
+        profile_dir = str(settings.data_path / "browser_profile")
         if settings.browser_type == "firefox":
-            browser = await self._playwright.firefox.launch(
+            self._context = await self._playwright.firefox.launch_persistent_context(
+                profile_dir,
                 headless=settings.headless,
-                firefox_user_prefs={"dom.webdriver.enabled": False},
-            )
-            self._context = await browser.new_context(
                 viewport={"width": 1280, "height": 900},
                 user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
                 locale="en-US",
                 timezone_id="America/New_York",
+                firefox_user_prefs={"dom.webdriver.enabled": False},
             )
         else:
-            browser = await self._playwright.chromium.launch(
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                profile_dir,
                 headless=settings.headless,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                ],
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
                 executable_path=_find_chrome(),
-            )
-            self._context = await browser.new_context(
                 viewport={"width": 1280, "height": 900},
-                user_agent=(
-                    "Mozilla/5.0 (X11; Linux x86_64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/149.0.0.0 Safari/537.36"
-                ),
+                user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/149.0.0.0 Safari/537.36",
                 locale="en-US",
                 timezone_id="America/New_York",
             )
