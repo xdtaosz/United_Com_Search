@@ -212,7 +212,7 @@ def watch(
     db = Database.get_instance()
     db.init_db()
     db.save_watch(rule)
-    console.print(f"[green]✓[/green] Watch rule added: {origin} → {destination}")
+    console.print(f"[green]✓[/green] Watch rule added: {rule.origin} → {rule.destination}")
 
 
 @app.command()
