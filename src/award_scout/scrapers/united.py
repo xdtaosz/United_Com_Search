@@ -282,6 +282,7 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
                 resp = await client.post(UNITED_FETCH_AWARD_CALENDAR, json=payload, headers=headers)
+                print(f"  [CALENDAR] HTTP {resp.status_code} {len(resp.content)} bytes")
                 log._write(f"[STAGE1] Calendar API status: {resp.status_code}")
                 if _is_rate_limited(resp):
                     log.error("calendar_fetch", f"RATE LIMITED (status {resp.status_code})")
@@ -290,9 +291,41 @@ class UnitedScraper(BaseAirlineScraper):
                     data = resp.json()
                     result = self._parse_calendar_dates(data, max_miles, log)
                     log.stage1_summary(len(result), 30)
+                    print(f"  [CALENDAR] Found {len(result)} qualifying dates")
                     return result
         except Exception as e:
+            print(f"  [CALENDAR] httpx failed: {e}, trying browser...")
             log.error("calendar_fetch", str(e)[:120])
+
+        # Fallback: use browser to capture FetchAwardCalendar response
+        try:
+            ctx = await self._ensure_browser()
+            page = await ctx.new_page()
+            responses = []
+
+            async def capture(r):
+                if r.status == 200 and 'FetchAwardCalendar' in r.url:
+                    try:
+                        responses.append(await r.json())
+                    except Exception:
+                        pass
+
+            page.on('response', capture)
+            search_url = f"https://www.united.com/en/us/fsr/choose-flights?f={origin.upper()}&t={destination.upper()}&d={start_date.strftime('%Y/%m/%d')}&tt=1&at=1&sc=7&act=2&px=1&tqp=A"
+            await page.goto(search_url, wait_until="commit", timeout=60000)
+            await asyncio.sleep(25)
+            page.remove_listener('response', capture)
+            await page.close()
+
+            if responses:
+                data = responses[0]
+                result = self._parse_calendar_dates(data, max_miles, log)
+                log.stage1_summary(len(result), 30)
+                print(f"  [CALENDAR] browser found {len(result)} qualifying dates")
+                return result
+        except Exception as e2:
+            print(f"  [CALENDAR] browser also failed: {e2}")
+
         return {}
 
     async def search_range(
@@ -383,14 +416,16 @@ class UnitedScraper(BaseAirlineScraper):
     # --- API helpers ---
 
     async def _search_single_date(self, query: SearchQuery) -> list[AwardOffer]:
-        """FetchFlights for a single specific date."""
+        """FetchFlights for a single specific date. Falls back to browser if httpx fails."""
         payload = self._build_api_payload(query, calendar_length_of_stay=0)
         cookies = self._session.get_cookies_httpx(self.airline_name) or {}
         headers = self._api_headers()
 
+        # Try httpx first
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
                 resp = await client.post(UNITED_FETCH_FLIGHTS, json=payload, headers=headers)
+                print(f"  [FETCH] {query.depart_date} HTTP {resp.status_code}")
                 if _is_rate_limited(resp):
                     raise RateLimitError(f"Rate limited on {query.depart_date} (status {resp.status_code})")
                 if resp.status_code == 200:
@@ -399,9 +434,13 @@ class UnitedScraper(BaseAirlineScraper):
                         return self._parse_fetch_response(data, query)
         except RateLimitError:
             raise
-        except Exception:
-            pass
-        return []
+        except Exception as e:
+            print(f"  [FETCH] httpx failed: {e}, trying browser...")
+
+        # Fallback: use browser
+        offers = await self._search_via_browser(query)
+        print(f"  [FETCH] browser returned {len(offers)} offers")
+        return offers
 
     def _api_headers(self) -> dict[str, str]:
         return {
