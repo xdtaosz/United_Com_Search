@@ -508,8 +508,11 @@ class UnitedScraper(BaseAirlineScraper):
                     await asyncio.sleep(20)
                     # Click Update/Find flights to trigger search
                     search_btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
-                    if await search_btn.count() > 0 and await search_btn.is_visible():
-                        await search_btn.click()
+                    if await search_btn.count() > 0:
+                        try:
+                            await search_btn.click(timeout=5000)
+                        except Exception:
+                            await search_btn.click(force=True)
                         print(f"  [FETCH] clicked search button")
             resp = await resp_info.value
             data = await resp.json()
