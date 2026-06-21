@@ -81,20 +81,15 @@ class UnitedScraper(BaseAirlineScraper):
                 )
 
             # Step 1: click "Sign in" — try multiple approaches
-            for attempt in range(3):
-                clicked = await page.evaluate("""
-                    const btns = document.querySelectorAll('button, a, [role="button"]');
-                    let found = false;
-                    for (const b of btns) {
-                        const text = (b.textContent || '').replace(/\\s+/g, ' ').trim();
-                        if (text === 'Sign in' || text === 'Sign In') {
-                            b.click();
-                            found = true;
-                            break;
-                        }
-                    }
-                    return found;
-                """)
+            for _ in range(3):
+                clicked = await page.evaluate("(() => {"
+                    "const btns = document.querySelectorAll('button, a, [role=\"button\"]');"
+                    "for (const b of btns) {"
+                    "  const text = (b.textContent || '').replace(/\\s+/g, ' ').trim();"
+                    "  if (text === 'Sign in' || text === 'Sign In') { b.click(); return true; }"
+                    "}"
+                    "return false;"
+                    "})()")
                 if clicked:
                     break
                 await asyncio.sleep(3)
@@ -139,14 +134,14 @@ class UnitedScraper(BaseAirlineScraper):
             await pw_field.fill(password)
 
             # Step 3: click the Sign in button inside the dialog
-            await page.evaluate("""
-                const btns = document.querySelectorAll('button');
-                for (const b of btns) {
-                    if (b.textContent.trim() === 'Sign in' && b.closest('[role="dialog"]')) {
-                        b.click(); break;
-                    }
-                }
-            """)
+            await page.evaluate("(() => {"
+                "const btns = document.querySelectorAll('button');"
+                "for (const b of btns) {"
+                "  if ((b.textContent || '').trim() === 'Sign in' && b.closest('[role=\"dialog\"]')) {"
+                "    b.click(); return;"
+                "  }"
+                "}"
+                "})()")
             await asyncio.sleep(3)
 
             if await self._detect_mfa(page):
