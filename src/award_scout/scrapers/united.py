@@ -298,7 +298,7 @@ class UnitedScraper(BaseAirlineScraper):
 
             # Enable Flexible dates + click Update to trigger calendar API
             flex = page.locator('input[name="Flexible"]')
-            update = page.locator('button:has-text("Update")').first
+            update = page.locator('button:has-text("Find flights"), button:has-text("Update")').first
             has_flex = await flex.count() > 0
             has_update = await update.count() > 0 and await update.is_visible()
 
