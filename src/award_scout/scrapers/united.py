@@ -295,41 +295,22 @@ class UnitedScraper(BaseAirlineScraper):
             )
             print(f"  [CALENDAR] navigating to calendar view...")
 
-            prom = page.wait_for_response(
-                lambda r: r.status == 200 and ('FetchAwardCalendar' in r.url),
+            async with page.expect_response(
+                lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
                 timeout=45000
-            )
-            await page.goto(calendar_url, wait_until="commit", timeout=60000)
-            try:
-                resp = await prom
-                data = await resp.json()
-                result = self._parse_calendar_dates(data, max_miles, log)
-                log.stage1_summary(len(result), 30)
-                print(f"  [CALENDAR] {len(result)} qualifying dates")
-                await page.close()
-                return result
-            except Exception as e:
-                print(f"  [CALENDAR] wait_for_response failed: {e}")
-                # Try event listener fallback
-                responses = []
-                async def capture(r):
-                    if r.status == 200 and ('FetchAwardCalendar' in r.url or 'FetchFlights' in r.url):
-                        try:
-                            responses.append(await r.json())
-                        except Exception:
-                            pass
-                page.on('response', capture)
+            ) as resp_info:
                 await page.goto(calendar_url, wait_until="commit", timeout=60000)
-                await asyncio.sleep(30)
-                page.remove_listener('response', capture)
+            resp = await resp_info.value
+            data = await resp.json()
+            result = self._parse_calendar_dates(data, max_miles, log)
+            log.stage1_summary(len(result), 30)
+            print(f"  [CALENDAR] {len(result)} qualifying dates")
+            await page.close()
+            return result
+        except Exception as e:
+            print(f"  [CALENDAR] failed: {e}")
+            if page:
                 await page.close()
-                if responses:
-                    data = responses[0]
-                    result = self._parse_calendar_dates(data, max_miles, log)
-                    log.stage1_summary(len(result), 30)
-                    print(f"  [CALENDAR] fallback found {len(result)} qualifying dates")
-                    return result
-                print(f"  [CALENDAR] no calendar response — will query individually")
         except Exception as e:
             print(f"  [CALENDAR] failed: {e}")
             log.error("calendar_fetch", str(e)[:120])
@@ -486,13 +467,13 @@ class UnitedScraper(BaseAirlineScraper):
         page.set_default_timeout(settings.browser_timeout_ms)
 
         search_url = self._build_search_url(query)
-        prom = page.wait_for_response(
-            lambda r: r.status == 200 and 'FetchFlights' in r.url,
-            timeout=45000
-        )
-        await page.goto(search_url, wait_until="commit", timeout=60000)
         try:
-            resp = await prom
+            async with page.expect_response(
+                lambda r: r.status == 200 and 'FetchFlights' in r.url,
+                timeout=45000
+            ) as resp_info:
+                await page.goto(search_url, wait_until="commit", timeout=60000)
+            resp = await resp_info.value
             data = await resp.json()
             trips = (data.get("data", data)).get("Trips", [])
             for t in trips:
@@ -507,8 +488,9 @@ class UnitedScraper(BaseAirlineScraper):
             await page.close()
             return parsed
         except Exception as e:
-            print(f"  [FETCH] wait_for_response failed: {e}")
+            print(f"  [FETCH] expect_response failed: {e}")
             await page.close()
+            return []
             return []
 
     def _build_search_url(self, query: SearchQuery) -> str:
