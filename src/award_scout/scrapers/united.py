@@ -59,7 +59,7 @@ class UnitedScraper(BaseAirlineScraper):
             page = await ctx.new_page()
             try:
                 await page.goto(self.login_url, wait_until="commit", timeout=30000)
-                await asyncio.sleep(10)
+                await asyncio.sleep(20)
                 if await self._is_logged_in(page):
                     await page.close()
                     self._bearer_token = await self._capture_bearer_token(ctx)
@@ -76,7 +76,7 @@ class UnitedScraper(BaseAirlineScraper):
     async def _is_logged_in(self, page: Page) -> bool:
         try:
             await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
-            await asyncio.sleep(10)
+            await asyncio.sleep(20)
             content = await page.content()
             # Only check markers that appear only when truly authenticated:
             # "Cardmember" badge, or auth-specific session indicator
@@ -97,11 +97,11 @@ class UnitedScraper(BaseAirlineScraper):
 
             # Navigate to login page and wait for React to render
             await page.goto(UNITED_BASE + "/en/us/login", wait_until="commit", timeout=30000)
-            await asyncio.sleep(25)
+            await asyncio.sleep(50)
 
             # If page hasn't rendered yet, wait longer
             if await page.locator('button').count() == 0:
-                await asyncio.sleep(15)
+                await asyncio.sleep(30)
                 print("  Extra wait for slow render...")
             print(f"  Buttons on page: {await page.locator('button').count()}")
 
@@ -294,7 +294,7 @@ class UnitedScraper(BaseAirlineScraper):
             )
             print(f"  [CALENDAR] navigating...")
             await page.goto(calendar_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(12)
+            await asyncio.sleep(25)
 
             # If page shows login form, fill password automatically
             pw = page.locator('input[type="password"]').first
@@ -307,7 +307,7 @@ class UnitedScraper(BaseAirlineScraper):
                     await asyncio.sleep(5)
                     # Re-navigate to trigger search after login
                     await page.goto(calendar_url, wait_until="commit", timeout=60000)
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(20)
 
             # Click Update to trigger calendar API
             async with page.expect_response(
@@ -488,7 +488,7 @@ class UnitedScraper(BaseAirlineScraper):
 
         # If page shows login form, fill password
         await page.goto(search_url, wait_until="commit", timeout=60000)
-        await asyncio.sleep(10)
+        await asyncio.sleep(20)
         pw = page.locator('input[type="password"]').first
         if await pw.count() > 0 and await pw.is_visible():
             await pw.fill(settings.united_password or "")
@@ -497,7 +497,7 @@ class UnitedScraper(BaseAirlineScraper):
                 await btn.click()
                 await asyncio.sleep(5)
             await page.goto(search_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(10)
+            await asyncio.sleep(20)
         try:
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchFlights' in r.url,
