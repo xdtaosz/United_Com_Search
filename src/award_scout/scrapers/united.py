@@ -92,9 +92,33 @@ class UnitedScraper(BaseAirlineScraper):
                 except Exception:
                     pass
 
-            # Find any text/password inputs in the modal
+            # Check for iframes (United login may be in an iframe)
+            frames = page.frames
+            print(f"  Page frames: {len(frames)}")
+            for fi, frame in enumerate(frames):
+                url = frame.url[:80]
+                frame_inputs = await frame.locator('input:visible').count()
+                frame_btns = await frame.locator('button:visible').count()
+                print(f"  Frame {fi}: {frame_inputs} inputs, {frame_btns} buttons, url={url}")
+
+            # Check for popup windows
+            ctx = page.context
+            popup_pages = ctx.pages
+            print(f"  Context pages: {len(popup_pages)}")
+            for pi, pp in enumerate(popup_pages):
+                print(f"  Page {pi}: url={pp.url[:80]}")
+
+            # Check for dialogs and all interactive elements
+            all_elements = page.locator('input, button, [role="textbox"], [role="dialog"]')
+            print(f"  Inputs+buttons+dialogs: {await all_elements.count()}")
+
+            body_text = await page.locator('body').text_content()
+            print(f"  Page text sample: {body_text[:400]}")
+
+            # Find visible inputs in main frame
             all_inputs = page.locator('input:visible')
             input_count = await all_inputs.count()
+            print(f"  Main frame visible inputs: {input_count}")
             visible_text = []
             pw_input = None
 
