@@ -55,7 +55,7 @@ class UnitedScraper(BaseAirlineScraper):
     async def _is_logged_in(self, page: Page) -> bool:
         try:
             await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
-            await asyncio.sleep(25)
+            await asyncio.sleep(10)
             content = await page.content()
             # Only check markers that appear only when truly authenticated:
             # "Cardmember" badge, or auth-specific session indicator
@@ -71,7 +71,7 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             # United login is a modal on homepage, not a separate page
             await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
-            await asyncio.sleep(25)
+            await asyncio.sleep(10)
 
             mp_number = settings.united_mp_number
             password = settings.united_password
@@ -80,14 +80,40 @@ class UnitedScraper(BaseAirlineScraper):
                     "UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env"
                 )
 
-            # Step 1: click "Sign in" in navbar to open login modal
-            await page.evaluate("""
-                const btns = document.querySelectorAll('button');
-                for (const b of btns) {
-                    if (b.textContent.trim() === 'Sign in') { b.click(); break; }
-                }
-            """)
+            # Step 1: click "Sign in" — try multiple approaches
+            for attempt in range(3):
+                clicked = await page.evaluate("""
+                    const btns = document.querySelectorAll('button, a, [role="button"]');
+                    let found = false;
+                    for (const b of btns) {
+                        const text = (b.textContent || '').replace(/\\s+/g, ' ').trim();
+                        if (text === 'Sign in' || text === 'Sign In') {
+                            b.click();
+                            found = true;
+                            break;
+                        }
+                    }
+                    return found;
+                """)
+                if clicked:
+                    break
+                await asyncio.sleep(3)
+
             await asyncio.sleep(5)
+
+            # Check if password field appeared
+            pw_field = page.locator('input[type="password"]').first
+            try:
+                await pw_field.wait_for(state="visible", timeout=10000)
+            except Exception:
+                # Fallback: try clicking Sign in button directly with Playwright
+                btns = page.locator('button:has-text("Sign")')
+                for i in range(await btns.count()):
+                    btn = btns.nth(i)
+                    if await btn.is_visible():
+                        await btn.click()
+                        break
+                await asyncio.sleep(5)
 
             # Step 2: check if password field is already visible (MP remembered)
             pw_field = page.locator('input[type="password"], input[name*="password"], input[name*="Password"]').first
