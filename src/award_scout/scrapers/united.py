@@ -98,28 +98,15 @@ class UnitedScraper(BaseAirlineScraper):
                 except Exception:
                     pass
 
-            # Check for iframes (United login may be in an iframe)
-            frames = page.frames
-            print(f"  Page frames: {len(frames)}")
-            for fi, frame in enumerate(frames):
-                url = frame.url[:80]
-                frame_inputs = await frame.locator('input:visible').count()
-                frame_btns = await frame.locator('button:visible').count()
-                print(f"  Frame {fi}: {frame_inputs} inputs, {frame_btns} buttons, url={url}")
-
-            # Check for popup windows
-            ctx = page.context
-            popup_pages = ctx.pages
-            print(f"  Context pages: {len(popup_pages)}")
-            for pi, pp in enumerate(popup_pages):
-                print(f"  Page {pi}: url={pp.url[:80]}")
-
-            # Check for dialogs and all interactive elements
-            all_elements = page.locator('input, button, [role="textbox"], [role="dialog"]')
-            print(f"  Inputs+buttons+dialogs: {await all_elements.count()}")
-
-            body_text = await page.locator('body').text_content()
-            print(f"  Page text sample: {body_text[:400]}")
+            # Debug: check page state
+            print(f"  Buttons: {await page.locator('button').count()}")
+            try:
+                for frame in page.frames:
+                    frame_inputs = await frame.locator('input:visible').count()
+                    if frame_inputs > 0:
+                        print(f"  Frame {frame.url[:60]}: {frame_inputs} inputs")
+            except Exception:
+                pass
 
             # Find the login field (MP/email) — NOT the search box
             mp_field = page.locator(
