@@ -279,9 +279,12 @@ class UnitedScraper(BaseAirlineScraper):
             ctx = await self._ensure_browser()
             page = await ctx.new_page()
             responses = []
+            all_urls = []
 
             async def capture(r):
-                if r.status == 200 and 'FetchAwardCalendar' in r.url:
+                url_short = r.url[r.url.find('/api/'):] if '/api/' in r.url else r.url[-60:]
+                all_urls.append(f"{r.status} {url_short}")
+                if r.status == 200 and ('FetchAwardCalendar' in r.url or 'FetchFlights' in r.url):
                     try:
                         responses.append(await r.json())
                     except Exception:
@@ -290,18 +293,22 @@ class UnitedScraper(BaseAirlineScraper):
             page.on('response', capture)
             search_url = f"https://www.united.com/en/us/fsr/choose-flights?f={origin.upper()}&t={destination.upper()}&d={start_date.strftime('%Y/%m/%d')}&tt=1&at=1&sc=7&act=2&px=1&tqp=A"
             await page.goto(search_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(25)
+            await asyncio.sleep(30)
             page.remove_listener('response', capture)
             await page.close()
+
+            # Show what API calls were made
+            api_calls = [u for u in all_urls if '/api/' in u or 'Fetch' in u]
+            print(f"  [CALENDAR] {len(all_urls)} responses, {len(api_calls)} API calls: {api_calls[:5]}")
 
             if responses:
                 data = responses[0]
                 result = self._parse_calendar_dates(data, max_miles, log)
                 log.stage1_summary(len(result), 30)
-                print(f"  [CALENDAR] {len(result)} qualifying dates with Business ≤{max_miles or '∞'}mi")
+                print(f"  [CALENDAR] {len(result)} qualifying dates")
                 return result
             else:
-                print(f"  [CALENDAR] no FetchAwardCalendar response captured")
+                print(f"  [CALENDAR] no FetchAwardCalendar/FetchFlights response captured")
         except Exception as e:
             print(f"  [CALENDAR] failed: {e}")
             log.error("calendar_fetch", str(e)[:120])
