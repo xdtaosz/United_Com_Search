@@ -308,7 +308,7 @@ class UnitedScraper(BaseAirlineScraper):
                 print(f"  [CALENDAR] {len(result)} qualifying dates")
                 return result
             else:
-                print(f"  [CALENDAR] no FetchAwardCalendar/FetchFlights response captured")
+                print(f"  [CALENDAR] no calendar response — querying all dates individually")
         except Exception as e:
             print(f"  [CALENDAR] failed: {e}")
             log.error("calendar_fetch", str(e)[:120])
@@ -333,15 +333,13 @@ class UnitedScraper(BaseAirlineScraper):
 
         # Stage 1: calendar overview
         available = await self.get_available_dates(origin, destination, cabin, start_date, max_miles)
-        if not available:
-            return []
 
-        # Stage 2: FetchFlights per qualifying date
+        # Stage 2: FetchFlights per qualifying date (or all dates if calendar failed)
         log = SearchLogger()
         all_offers: list[AwardOffer] = []
         current = start_date
         while current <= end_date:
-            if current not in available:
+            if available and current not in available:
                 current += timedelta(days=1)
                 continue
 
