@@ -289,7 +289,7 @@ class UnitedScraper(BaseAirlineScraper):
             )
             print(f"  [CALENDAR] navigating to calendar view...")
 
-            prom = page.waitForResponse(
+            prom = page.wait_for_response(
                 lambda r: r.status == 200 and ('FetchAwardCalendar' in r.url),
                 timeout=45000
             )
@@ -303,7 +303,7 @@ class UnitedScraper(BaseAirlineScraper):
                 await page.close()
                 return result
             except Exception as e:
-                print(f"  [CALENDAR] waitForResponse failed: {e}")
+                print(f"  [CALENDAR] wait_for_response failed: {e}")
                 # Try event listener fallback
                 responses = []
                 async def capture(r):
@@ -477,7 +477,7 @@ class UnitedScraper(BaseAirlineScraper):
         page.set_default_timeout(settings.browser_timeout_ms)
 
         search_url = self._build_search_url(query)
-        prom = page.waitForResponse(
+        prom = page.wait_for_response(
             lambda r: r.status == 200 and 'FetchFlights' in r.url,
             timeout=45000
         )
@@ -498,7 +498,7 @@ class UnitedScraper(BaseAirlineScraper):
             await page.close()
             return parsed
         except Exception as e:
-            print(f"  [FETCH] waitForResponse failed: {e}")
+            print(f"  [FETCH] wait_for_response failed: {e}")
             await page.close()
             return []
 
