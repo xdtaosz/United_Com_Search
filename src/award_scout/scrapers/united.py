@@ -102,7 +102,15 @@ class UnitedScraper(BaseAirlineScraper):
             try:
                 await pw_field.wait_for(state="visible", timeout=20000)
             except Exception:
-                raise LoginError("Cannot find login form — the page may have changed")
+                # Save screenshot for debugging
+                screenshot_path = settings.data_path / "login_failed.png"
+                await page.screenshot(path=str(screenshot_path))
+                raise LoginError(
+                    "Cannot find login form. Screenshot saved to "
+                    f"{screenshot_path}. The page may have changed or "
+                    "Playwright cannot render United.com on this machine. "
+                    "Try 'award-scout login united' on a different machine."
+                )
 
             await pw_field.fill(password)
 
