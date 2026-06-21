@@ -74,45 +74,62 @@ class UnitedScraper(BaseAirlineScraper):
             if not mp_number or not password:
                 raise LoginError("UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env")
 
-            # Navigate to login page (redirects to homepage with modal)
+            # Navigate to login page
             await page.goto(UNITED_BASE + "/en/us/login", wait_until="commit", timeout=30000)
             await asyncio.sleep(10)
 
-            # Try password field first (MP may be remembered)
-            pw_field = page.locator('input[type="password"]').first
-            try:
-                await pw_field.wait_for(state="visible", timeout=15000)
-            except Exception:
-                # Modal not open — try clicking various Sign in triggers
-                for selector in [
-                    'button:has-text("Sign in")',
-                    '[aria-label*="sign in" i]',
-                    '[data-testid*="sign-in"]',
-                ]:
-                    try:
-                        btn = page.locator(selector).first
-                        if await btn.count() > 0:
-                            await btn.click()
-                            await asyncio.sleep(5)
-                            break
-                    except Exception:
-                        pass
+            # Click Sign in button to open modal
+            for selector in [
+                'button:has-text("Sign in")',
+                'button:has-text("Sign In")',
+            ]:
+                try:
+                    btn = page.locator(selector).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        await btn.click()
+                        await asyncio.sleep(5)
+                        break
+                except Exception:
+                    pass
 
-            # Try password field again after modal click attempts
-            try:
-                await pw_field.wait_for(state="visible", timeout=20000)
-            except Exception:
-                # Save screenshot for debugging
-                screenshot_path = settings.data_path / "login_failed.png"
-                await page.screenshot(path=str(screenshot_path))
-                raise LoginError(
-                    "Cannot find login form. Screenshot saved to "
-                    f"{screenshot_path}. The page may have changed or "
-                    "Playwright cannot render United.com on this machine. "
-                    "Try 'award-scout login united' on a different machine."
-                )
+            # Find any text/password inputs in the modal
+            all_inputs = page.locator('input:visible')
+            visible_text = []
+            pw_input = None
+            for i in range(await all_inputs.count()):
+                inp = all_inputs.nth(i)
+                t = await inp.get_attribute('type') or 'text'
+                name = await inp.get_attribute('name') or ''
+                placeholder = await inp.get_attribute('placeholder') or ''
+                label = name or placeholder or t
+                if t == 'password':
+                    pw_input = inp
+                elif t in ('text', 'email', 'tel'):
+                    visible_text.append((inp, label))
 
-            await pw_field.fill(password)
+            # Fill MP/email if found
+            if visible_text:
+                mp_field, _ = visible_text[0]
+                await mp_field.fill(mp_number)
+
+                # Check for Continue button
+                try:
+                    ctn = page.locator('button:has-text("Continue"), button:has-text("Next")').first
+                    if await ctn.count() > 0 and await ctn.is_visible():
+                        await ctn.click()
+                        await asyncio.sleep(3)
+                except Exception:
+                    pass
+
+            # Fill password
+            if pw_input is None:
+                pw_input = page.locator('input[type="password"]').first
+                try:
+                    await pw_input.wait_for(state="visible", timeout=20000)
+                except Exception:
+                    await page.screenshot(path=str(settings.data_path / "login_failed.png"))
+                    raise LoginError("Cannot find password field")
+            await pw_input.fill(password)
 
             # Click Sign in button in dialog
             submit = page.locator('button:has-text("Sign in")').last
