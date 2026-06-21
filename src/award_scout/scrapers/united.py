@@ -89,21 +89,26 @@ class UnitedScraper(BaseAirlineScraper):
             """)
             await asyncio.sleep(5)
 
-            # Step 2: fill form inside the modal
-            mp_field = page.locator('input[name*="MPID"], input[name*="MileagePlus"], input[name="mpNumber"]').first
-            await mp_field.wait_for(state="visible", timeout=15000)
-            await mp_field.fill(mp_number)
-
-            # Step 2b: try Continue if needed (two-step form), then fill password
-            continue_btn = page.locator('button:has-text("Continue")').first
-            try:
-                if await continue_btn.is_visible():
-                    await continue_btn.click()
-                    await asyncio.sleep(3)
-            except Exception:
-                pass
-
+            # Step 2: check if password field is already visible (MP remembered)
             pw_field = page.locator('input[type="password"], input[name*="password"], input[name*="Password"]').first
+
+            mp_field = page.locator('input[name*="MPID"], input[name*="MileagePlus"], input[name="mpNumber"]').first
+            mp_visible = await mp_field.count() > 0 and await mp_field.is_visible()
+
+            if mp_visible:
+                # MP field needs to be filled
+                await mp_field.wait_for(state="visible", timeout=15000)
+                await mp_field.fill(mp_number)
+
+                continue_btn = page.locator('button:has-text("Continue")').first
+                try:
+                    if await continue_btn.is_visible():
+                        await continue_btn.click()
+                        await asyncio.sleep(3)
+                except Exception:
+                    pass
+
+            # Wait for password field (may already be visible)
             await pw_field.wait_for(state="visible", timeout=30000)
             await pw_field.fill(password)
 
