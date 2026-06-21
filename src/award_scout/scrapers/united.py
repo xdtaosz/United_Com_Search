@@ -474,18 +474,24 @@ class UnitedScraper(BaseAirlineScraper):
             "BuildHashValue": "true",
         }
 
-    # --- Browser-based search (fallback) ---
+    # --- Browser-based search ---
 
     async def _search_via_browser(self, query: SearchQuery) -> list[AwardOffer]:
         ctx = await self._ensure_browser()
         if self.cookie_file.exists():
             cookies = json.loads(self.cookie_file.read_text())
             await ctx.add_cookies(cookies)
+            print(f"  [FETCH] loaded {len(cookies)} cookies: {[c['name'] for c in cookies[:5]]}")
+        else:
+            print(f"  [FETCH] WARNING: no cookie file at {self.cookie_file}")
+
         page = await ctx.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
-
         search_url = self._build_search_url(query)
+        print(f"  [FETCH] navigating to {search_url[:80]}...")
 
+        data = None
+        # Method 1: capture network response
         try:
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchFlights' in r.url,
@@ -494,15 +500,32 @@ class UnitedScraper(BaseAirlineScraper):
                 await page.goto(search_url, wait_until="commit", timeout=60000)
             resp = await resp_info.value
             data = await resp.json()
-        except Exception:
-            # Fallback: JS fetch inside authenticated page
-            data = await page.evaluate(
-                "async () => { const r = await fetch('/api/flight/FetchFlights',"
-                "{method:'POST',credentials:'include',"
-                "headers:{'Content-Type':'application/json'},"
-                "body:'" + json.dumps(self._build_api_payload(query, 0)).replace("'", "\\'") + "'});"
-                "return await r.json(); }"
-            )
+            print(f"  [FETCH] network capture OK: {resp.status}")
+        except Exception as e1:
+            print(f"  [FETCH] network capture failed ({e1}), trying JS fetch...")
+
+        # Method 2: JS fetch from within authenticated page
+        if data is None:
+            try:
+                print(f"  [FETCH] executing JS fetch...")
+                payload = self._build_api_payload(query, 0)
+                payload_json = json.dumps(payload)
+                data = await page.evaluate(
+                    f"async () => {{ const r = await fetch('/api/flight/FetchFlights',"
+                    f"{{method:'POST',credentials:'include',headers:{{'Content-Type':'application/json'}},"
+                    f"body:'{payload_json}'}});"
+                    f"const j = await r.json(); return j; }}"
+                )
+                status = data.get("Status") or data.get("data", {}).get("Status")
+                print(f"  [FETCH] JS fetch status: {status}")
+            except Exception as e2:
+                print(f"  [FETCH] JS fetch also failed: {e2}")
+                await page.screenshot(path=str(settings.data_path / "fetch_failed.png"))
+                await page.close()
+                return []
+
+        # Parse
+        if data:
             trips = (data.get("data", data)).get("Trips", [])
             for t in trips:
                 flights = t.get("Flights", [])
@@ -513,13 +536,12 @@ class UnitedScraper(BaseAirlineScraper):
                         cabins.add(p.get("CabinType", "?"))
                 print(f"  [RAW] {t.get('DepartDate','?')}: {len(flights)} flights, {total_products} products, cabins: {sorted(cabins)}")
             parsed = self._parse_fetch_response(data, query)
+            print(f"  [FETCH] parsed {len(parsed)} offers")
             await page.close()
             return parsed
-        except Exception as e:
-            print(f"  [FETCH] expect_response failed: {e}")
-            await page.close()
-            return []
-            return []
+
+        await page.close()
+        return []
 
     def _build_search_url(self, query: SearchQuery) -> str:
         sc = "7" if query.cabin in (CabinClass.BUSINESS, CabinClass.FIRST) else "3"
