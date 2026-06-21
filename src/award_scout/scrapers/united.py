@@ -499,18 +499,38 @@ class UnitedScraper(BaseAirlineScraper):
         pw = page.locator('input[type="password"]').first
         pw_count = await pw.count()
         pw_visible = pw_count > 0 and await pw.is_visible()
-        print(f"  [FETCH] password field: count={pw_count} visible={pw_visible}")
+        mp_field = page.locator('input[name*="MPID"], input[name*="MileagePlus"], input[name*="mpNumber"]').first
+        mp_visible = await mp_field.count() > 0 and await mp_field.is_visible()
+        print(f"  [FETCH] login check: pw={pw_count}/{pw_visible} mp={mp_visible}")
+
+        if mp_visible:
+            # MP not remembered — fill it first
+            print(f"  [FETCH] filling MP number...")
+            await mp_field.fill(settings.united_mp_number or "")
+            await asyncio.sleep(1)
+            # Click Continue/Next
+            ctn = page.locator('button:has-text("Continue"), button:has-text("Next")').first
+            if await ctn.count() > 0 and await ctn.is_visible():
+                await ctn.click()
+                await asyncio.sleep(5)
 
         if pw_visible:
-            print(f"  [FETCH] auto-filling password...")
+            print(f"  [FETCH] filling password...")
             await pw.fill(settings.united_password or "")
             await asyncio.sleep(1)
-            # Click Sign in button
             signin = page.locator('button:has-text("Sign in")').last
             if await signin.count() > 0:
                 await signin.click()
-                print(f"  [FETCH] clicked Sign in, waiting...")
                 await asyncio.sleep(10)
+
+                # Check for MFA
+                content = await page.content()
+                if any(kw in content.lower() for kw in ["verification", "security code", "two-factor", "authenticator"]):
+                    print(f"  [FETCH] MFA required — run 'award-scout login united' first")
+                    await page.screenshot(path=str(settings.data_path / "mfa_required.png"))
+                    await page.close()
+                    return []
+
                 # Re-navigate after login
                 await page.goto(search_url, wait_until="commit", timeout=60000)
                 await asyncio.sleep(20)
