@@ -275,7 +275,9 @@ class UnitedScraper(BaseAirlineScraper):
 
         log = SearchLogger()
         route = f"{origin.upper()}→{destination.upper()}"
-        log.stage1_start(route, cabin.value, f"{start_date} +30d")
+        cabin_name = cabin.value
+        mm_str = f" ≤{max_miles:,}mi" if max_miles else ""
+        log.stage1_start(route, cabin_name, f"{start_date} +30d{mm_str}")
 
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
@@ -302,6 +304,12 @@ class UnitedScraper(BaseAirlineScraper):
         max_miles: int | None = None,
     ) -> list[AwardOffer]:
         """Calendar pre-filter → per-day FetchFlights with delays."""
+        log = SearchLogger()
+        route = f"{origin.upper()}→{destination.upper()}"
+        cabin_name = cabin.value
+        mm_str = f" ≤{max_miles:,}mi" if max_miles else " no limit"
+        log._write(f"[SEARCH] {route} | {cabin_name} | {start_date} to {end_date}{mm_str} | delay={settings.search_delay_seconds}s")
+
         # Stage 1: calendar overview
         available = await self.get_available_dates(origin, destination, cabin, start_date, max_miles)
         if not available:
