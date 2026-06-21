@@ -309,21 +309,12 @@ class UnitedScraper(BaseAirlineScraper):
                     await page.goto(calendar_url, wait_until="commit", timeout=60000)
                     await asyncio.sleep(20)
 
-            # Click Update to trigger calendar API
+            # Navigate to calendar URL — FetchAwardCalendar triggers on load
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
                 timeout=90000
             ) as resp_info:
-                btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
-                if await btn.count() > 0:
-                    try:
-                        await btn.click(timeout=5000)
-                        print(f"  [CALENDAR] clicked search button")
-                    except Exception:
-                        print(f"  [CALENDAR] button click failed, trying force...")
-                        await btn.click(force=True)
-                else:
-                    print(f"  [CALENDAR] search button not found")
+                await page.goto(calendar_url, wait_until="commit", timeout=60000)
             resp = await resp_info.value
             data = await resp.json()
             result = self._parse_calendar_dates(data, max_miles, log)
@@ -495,33 +486,14 @@ class UnitedScraper(BaseAirlineScraper):
             ) as resp_info:
                 # Navigate: page will auto-trigger FetchFlights
                 await page.goto(search_url, wait_until="commit", timeout=60000)
-                await asyncio.sleep(20)
-                # Click Update/Find flights to trigger search if needed
-                search_btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
-                if await search_btn.count() > 0:
-                    try:
-                        await search_btn.click(timeout=5000)
-                        print(f"  [FETCH] clicked search button")
-                    except Exception:
-                        pass
-                # If page shows login, auto-fill
+                # Auto-fill password if login required
                 pw = page.locator('input[type="password"]').first
                 if await pw.count() > 0 and await pw.is_visible():
                     await pw.fill(settings.united_password or "")
                     btn = page.locator('button:has-text("Sign in")').last
                     if await btn.count() > 0:
                         await btn.click()
-                        await asyncio.sleep(5)
-                    # Re-navigate after login
                     await page.goto(search_url, wait_until="commit", timeout=60000)
-                    await asyncio.sleep(20)
-                    search_btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
-                    if await search_btn.count() > 0:
-                        try:
-                            await search_btn.click(timeout=5000)
-                        except Exception:
-                            await search_btn.click(force=True)
-                        print(f"  [FETCH] clicked search button after login")
             resp = await resp_info.value
             data = await resp.json()
             trips = (data.get("data", data)).get("Trips", [])
