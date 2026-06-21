@@ -315,11 +315,15 @@ class UnitedScraper(BaseAirlineScraper):
                 timeout=90000
             ) as resp_info:
                 btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
-                if await btn.count() > 0 and await btn.is_visible():
-                    await btn.click()
-                    print(f"  [CALENDAR] clicked search button...")
+                if await btn.count() > 0:
+                    try:
+                        await btn.click(timeout=5000)
+                        print(f"  [CALENDAR] clicked search button")
+                    except Exception:
+                        print(f"  [CALENDAR] button click failed, trying force...")
+                        await btn.click(force=True)
                 else:
-                    print(f"  [CALENDAR] search button not found, waiting...")
+                    print(f"  [CALENDAR] search button not found")
             resp = await resp_info.value
             data = await resp.json()
             result = self._parse_calendar_dates(data, max_miles, log)
