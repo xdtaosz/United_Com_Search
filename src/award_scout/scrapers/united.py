@@ -120,13 +120,16 @@ class UnitedScraper(BaseAirlineScraper):
 
             if mp_visible:
                 await mp_field.fill(mp_number)
-                # Click Continue/Next to advance to password
-                for btn_text in ["Continue", "Next"]:
+                # Press Enter or click Continue/Next
+                await mp_field.press("Enter")
+                await asyncio.sleep(5)
+                # Also try clicking
+                for btn_text in ["Continue", "Next", "Sign in"]:
                     try:
                         btn = page.locator(f'button:has-text("{btn_text}")').first
                         if await btn.count() > 0 and await btn.is_visible():
                             await btn.click()
-                            await asyncio.sleep(5)
+                            await asyncio.sleep(3)
                             break
                     except Exception:
                         pass
