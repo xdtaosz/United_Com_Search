@@ -69,80 +69,48 @@ class UnitedScraper(BaseAirlineScraper):
         page.set_default_timeout(settings.browser_timeout_ms)
 
         try:
-            # United login is a modal on homepage, not a separate page
-            await page.goto(UNITED_BASE + "/en/us/", wait_until="commit", timeout=30000)
-            await asyncio.sleep(10)
-
             mp_number = settings.united_mp_number
             password = settings.united_password
             if not mp_number or not password:
-                raise LoginError(
-                    "UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env"
-                )
+                raise LoginError("UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env")
 
-            # Step 1: click "Sign in" — try multiple approaches
-            for _ in range(3):
-                clicked = await page.evaluate("(() => {"
-                    "const btns = document.querySelectorAll('button, a, [role=\"button\"]');"
-                    "for (const b of btns) {"
-                    "  const text = (b.textContent || '').replace(/\\s+/g, ' ').trim();"
-                    "  if (text === 'Sign in' || text === 'Sign In') { b.click(); return true; }"
-                    "}"
-                    "return false;"
-                    "})()")
-                if clicked:
-                    break
-                await asyncio.sleep(3)
+            # Navigate to login page (redirects to homepage with modal)
+            await page.goto(UNITED_BASE + "/en/us/login", wait_until="commit", timeout=30000)
+            await asyncio.sleep(10)
 
-            await asyncio.sleep(5)
-
-            # Check if password field appeared
+            # Try password field first (MP may be remembered)
             pw_field = page.locator('input[type="password"]').first
             try:
-                await pw_field.wait_for(state="visible", timeout=10000)
+                await pw_field.wait_for(state="visible", timeout=15000)
             except Exception:
-                # Fallback: try clicking Sign in button directly with Playwright
-                btns = page.locator('button:has-text("Sign")')
-                for i in range(await btns.count()):
-                    btn = btns.nth(i)
-                    if await btn.is_visible():
-                        await btn.click()
-                        break
-                await asyncio.sleep(5)
+                # Modal not open — try clicking various Sign in triggers
+                for selector in [
+                    'button:has-text("Sign in")',
+                    '[aria-label*="sign in" i]',
+                    '[data-testid*="sign-in"]',
+                ]:
+                    try:
+                        btn = page.locator(selector).first
+                        if await btn.count() > 0:
+                            await btn.click()
+                            await asyncio.sleep(5)
+                            break
+                    except Exception:
+                        pass
 
-            # Step 2: check if password field is already visible (MP remembered)
-            pw_field = page.locator('input[type="password"], input[name*="password"], input[name*="Password"]').first
+            # Try password field again after modal click attempts
+            try:
+                await pw_field.wait_for(state="visible", timeout=20000)
+            except Exception:
+                raise LoginError("Cannot find login form — the page may have changed")
 
-            mp_field = page.locator('input[name*="MPID"], input[name*="MileagePlus"], input[name="mpNumber"]').first
-            mp_visible = await mp_field.count() > 0 and await mp_field.is_visible()
-
-            if mp_visible:
-                # MP field needs to be filled
-                await mp_field.wait_for(state="visible", timeout=15000)
-                await mp_field.fill(mp_number)
-
-                continue_btn = page.locator('button:has-text("Continue")').first
-                try:
-                    if await continue_btn.is_visible():
-                        await continue_btn.click()
-                        await asyncio.sleep(3)
-                except Exception:
-                    pass
-
-            # Wait for password field (may already be visible)
-            await pw_field.wait_for(state="visible", timeout=30000)
             await pw_field.fill(password)
 
-            # Step 3: click the Sign in button inside the dialog
-            await page.evaluate("(() => {"
-                "const btns = document.querySelectorAll('button');"
-                "for (const b of btns) {"
-                "  if ((b.textContent || '').trim() === 'Sign in' && b.closest('[role=\"dialog\"]')) {"
-                "    b.click(); return;"
-                "  }"
-                "}"
-                "})()")
-            await asyncio.sleep(3)
+            # Click Sign in button in dialog
+            submit = page.locator('button:has-text("Sign in")').last
+            if await submit.count() > 0:
+                await submit.click()
+                await asyncio.sleep(5)
 
             if await self._detect_mfa(page):
                 code = await self._handle_mfa(page)
@@ -152,7 +120,6 @@ class UnitedScraper(BaseAirlineScraper):
                     await self._submit_mfa(page, code)
                     await asyncio.sleep(3)
                 except Exception:
-                    # MFA form might have auto-advanced; check login state
                     pass
 
             if not await self._is_logged_in(page):
