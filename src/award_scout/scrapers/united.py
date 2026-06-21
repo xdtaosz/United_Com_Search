@@ -296,31 +296,16 @@ class UnitedScraper(BaseAirlineScraper):
             await page.goto(calendar_url, wait_until="commit", timeout=60000)
             await asyncio.sleep(15)
 
-            # Enable Flexible dates + click Update to trigger calendar API
-            flex = page.locator('input[name="Flexible"]')
-            update = page.locator('button:has-text("Find flights"), button:has-text("Update")').first
-            has_flex = await flex.count() > 0
-            has_update = await update.count() > 0 and await update.is_visible()
-
-            if has_flex and has_update:
-                await flex.check()
-                print(f"  [CALENDAR] Flexible dates enabled, clicking Update...")
-                async with page.expect_response(
-                    lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
-                    timeout=45000
-                ) as resp_info:
-                    await update.click()
-                resp = await resp_info.value
-            else:
-                # Page may have auto-triggered calendar on load
-                print(f"  [CALENDAR] waiting for auto-triggered calendar...")
-                async with page.expect_response(
-                    lambda r: r.status == 200 and ('FetchAwardCalendar' in r.url),
-                    timeout=30000
-                ) as resp_info:
-                    pass
-                resp = await resp_info.value
-
+            # Click Update to trigger calendar API
+            async with page.expect_response(
+                lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
+                timeout=45000
+            ) as resp_info:
+                btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click()
+                    print(f"  [CALENDAR] clicked search button...")
+            resp = await resp_info.value
             data = await resp.json()
             result = self._parse_calendar_dates(data, max_miles, log)
             log.stage1_summary(len(result), 30)
