@@ -267,37 +267,14 @@ class UnitedScraper(BaseAirlineScraper):
         start_date: date,
         max_miles: int | None = None,
     ) -> dict[date, tuple[int, float]]:
-        """Call FetchAwardCalendar once, return dates→(miles, cash) with availability."""
-        query = SearchQuery(origin=origin, destination=destination, depart_date=start_date, cabin=cabin)
-        payload = self._build_api_payload(query, calendar_length_of_stay=-1)
-        cookies = self._session.get_cookies_httpx(self.airline_name) or {}
-        headers = self._api_headers()
-
+        """Call FetchAwardCalendar via browser, return dates→(miles, cash) with availability."""
         log = SearchLogger()
         route = f"{origin.upper()}→{destination.upper()}"
         cabin_name = cabin.value
         mm_str = f" ≤{max_miles:,}mi" if max_miles else ""
         log.stage1_start(route, cabin_name, f"{start_date} +30d{mm_str}")
+        print(f"  [CALENDAR] browser: {route} {cabin_name} {start_date}")
 
-        try:
-            async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
-                resp = await client.post(UNITED_FETCH_AWARD_CALENDAR, json=payload, headers=headers)
-                print(f"  [CALENDAR] HTTP {resp.status_code} {len(resp.content)} bytes")
-                log._write(f"[STAGE1] Calendar API status: {resp.status_code}")
-                if _is_rate_limited(resp):
-                    log.error("calendar_fetch", f"RATE LIMITED (status {resp.status_code})")
-                    return {}
-                if resp.status_code == 200:
-                    data = resp.json()
-                    result = self._parse_calendar_dates(data, max_miles, log)
-                    log.stage1_summary(len(result), 30)
-                    print(f"  [CALENDAR] Found {len(result)} qualifying dates")
-                    return result
-        except Exception as e:
-            print(f"  [CALENDAR] httpx failed: {e}, trying browser...")
-            log.error("calendar_fetch", str(e)[:120])
-
-        # Fallback: use browser to capture FetchAwardCalendar response
         try:
             ctx = await self._ensure_browser()
             page = await ctx.new_page()
@@ -321,10 +298,13 @@ class UnitedScraper(BaseAirlineScraper):
                 data = responses[0]
                 result = self._parse_calendar_dates(data, max_miles, log)
                 log.stage1_summary(len(result), 30)
-                print(f"  [CALENDAR] browser found {len(result)} qualifying dates")
+                print(f"  [CALENDAR] {len(result)} qualifying dates with Business ≤{max_miles or '∞'}mi")
                 return result
-        except Exception as e2:
-            print(f"  [CALENDAR] browser also failed: {e2}")
+            else:
+                print(f"  [CALENDAR] no FetchAwardCalendar response captured")
+        except Exception as e:
+            print(f"  [CALENDAR] failed: {e}")
+            log.error("calendar_fetch", str(e)[:120])
 
         return {}
 
@@ -416,31 +396,9 @@ class UnitedScraper(BaseAirlineScraper):
     # --- API helpers ---
 
     async def _search_single_date(self, query: SearchQuery) -> list[AwardOffer]:
-        """FetchFlights for a single specific date. Falls back to browser if httpx fails."""
-        payload = self._build_api_payload(query, calendar_length_of_stay=0)
-        cookies = self._session.get_cookies_httpx(self.airline_name) or {}
-        headers = self._api_headers()
-
-        # Try httpx first
-        try:
-            async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
-                resp = await client.post(UNITED_FETCH_FLIGHTS, json=payload, headers=headers)
-                print(f"  [FETCH] {query.depart_date} HTTP {resp.status_code}")
-                if _is_rate_limited(resp):
-                    raise RateLimitError(f"Rate limited on {query.depart_date} (status {resp.status_code})")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("Status") == 200:
-                        return self._parse_fetch_response(data, query)
-        except RateLimitError:
-            raise
-        except Exception as e:
-            print(f"  [FETCH] httpx failed: {e}, trying browser...")
-
-        # Fallback: use browser
-        offers = await self._search_via_browser(query)
-        print(f"  [FETCH] browser returned {len(offers)} offers")
-        return offers
+        """FetchFlights via browser for a single date."""
+        print(f"  [FETCH] browser: {query.depart_date}")
+        return await self._search_via_browser(query)
 
     def _api_headers(self) -> dict[str, str]:
         return {
