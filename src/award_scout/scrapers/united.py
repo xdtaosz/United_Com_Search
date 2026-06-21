@@ -121,82 +121,46 @@ class UnitedScraper(BaseAirlineScraper):
             body_text = await page.locator('body').text_content()
             print(f"  Page text sample: {body_text[:400]}")
 
-            # Find visible inputs in main frame
-            all_inputs = page.locator('input:visible')
-            input_count = await all_inputs.count()
-            print(f"  Main frame visible inputs: {input_count}")
-            visible_text = []
-            pw_input = None
+            # Find the login field (MP/email) — NOT the search box
+            mp_field = page.locator(
+                'input[name*="MPID"], input[name*="MileagePlus"], '
+                'input[name*="mpNumber"], input[name*="email"], '
+                'input[id*="email"], input[type="email"]'
+            ).first
+            mp_visible = await mp_field.count() > 0
+            if mp_visible:
+                mp_visible = await mp_field.is_visible()
 
-            for i in range(input_count):
-                inp = all_inputs.nth(i)
-                t = await inp.get_attribute('type') or 'text'
-                name = await inp.get_attribute('name') or ''
-                placeholder = await inp.get_attribute('placeholder') or ''
-                label = name or placeholder or t
-                print(f"  [input {i}] type={t} name={name} placeholder={placeholder}")
-                if t == 'password':
-                    pw_input = inp
-                    print(f"  => PASSWORD FIELD FOUND")
-                elif t in ('text', 'email', 'tel'):
-                    visible_text.append((inp, label))
-
-            print(f"  Text inputs: {len(visible_text)}, Password found: {pw_input is not None}")
-
-            # Fill MP/email if found
-            if visible_text:
-                mp_field, label = visible_text[0]
-                print(f"  Filling first text field ({label})...")
+            if mp_visible:
                 await mp_field.fill(mp_number)
-
-                # Click any button that advances
-                print(f"  Looking for advance button...")
-                for btn_text in ["Continue", "Next", "Sign in", "Sign In"]:
+                # Click Continue/Next to advance to password
+                for btn_text in ["Continue", "Next"]:
                     try:
                         btn = page.locator(f'button:has-text("{btn_text}")').first
-                        cnt = await btn.count()
-                        vis = cnt > 0 and await btn.is_visible()
-                        print(f"    '{btn_text}' button: count={cnt} visible={vis}")
-                        if vis:
+                        if await btn.count() > 0 and await btn.is_visible():
                             await btn.click()
                             await asyncio.sleep(5)
-                            print(f"    Clicked '{btn_text}'")
                             break
-                    except Exception as e:
-                        print(f"    '{btn_text}' error: {e}")
+                    except Exception:
+                        pass
 
-                # Wait for password field (after button click or directly)
-                await asyncio.sleep(3)
-                print(f"  Re-scanning for password...")
-
-            # Final password scan
-            if pw_input is None:
+            # Find password field (may be visible already if MP remembered)
+            pw_input = page.locator('input[type="password"]').first
+            try:
+                await pw_input.wait_for(state="visible", timeout=20000)
+            except Exception:
+                # Secondary scan
                 all_inputs = page.locator('input:visible')
                 for i in range(await all_inputs.count()):
                     inp = all_inputs.nth(i)
-                    t = await inp.get_attribute('type') or 'text'
+                    t = await inp.get_attribute('type') or ''
                     if t == 'password':
                         pw_input = inp
-                        print(f"  Found password on re-scan")
                         break
-
-            if pw_input is None:
-                pw_input = page.locator('input[type="password"]').first
-                print(f"  Trying CSS selector fallback for password...")
-                try:
-                    await pw_input.wait_for(state="visible", timeout=20000)
-                except Exception:
-                    await page.screenshot(path=str(settings.data_path / "login_failed.png"))
-                    raise LoginError("Cannot find password field — see screenshot")
-
-            # Fill password
-            if pw_input is None:
-                pw_input = page.locator('input[type="password"]').first
-                try:
-                    await pw_input.wait_for(state="visible", timeout=20000)
-                except Exception:
+                else:
                     await page.screenshot(path=str(settings.data_path / "login_failed.png"))
                     raise LoginError("Cannot find password field")
+
             await pw_input.fill(password)
 
             # Click Sign in button in dialog
