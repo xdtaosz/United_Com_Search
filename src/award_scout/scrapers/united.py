@@ -499,9 +499,26 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchFlights' in r.url,
-                timeout=45000
+                timeout=90000
             ) as resp_info:
+                # Navigate: page will auto-trigger FetchFlights
                 await page.goto(search_url, wait_until="commit", timeout=60000)
+                # If page shows login, auto-fill
+                pw = page.locator('input[type="password"]').first
+                if await pw.count() > 0 and await pw.is_visible():
+                    await pw.fill(settings.united_password or "")
+                    btn = page.locator('button:has-text("Sign in")').last
+                    if await btn.count() > 0:
+                        await btn.click()
+                        await asyncio.sleep(5)
+                    # Re-navigate after login
+                    await page.goto(search_url, wait_until="commit", timeout=60000)
+                    await asyncio.sleep(20)
+                    # Click Update/Find flights to trigger search
+                    search_btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
+                    if await search_btn.count() > 0 and await search_btn.is_visible():
+                        await search_btn.click()
+                        print(f"  [FETCH] clicked search button")
             resp = await resp_info.value
             data = await resp.json()
             trips = (data.get("data", data)).get("Trips", [])
