@@ -488,7 +488,7 @@ class UnitedScraper(BaseAirlineScraper):
         page = await ctx.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
         search_url = self._build_search_url(query)
-        print(f"  [FETCH] navigating to {search_url[:80]}...")
+        print(f"  [FETCH] URL: {search_url}")
 
         data = None
         # Method 1: capture network response
@@ -510,6 +510,7 @@ class UnitedScraper(BaseAirlineScraper):
                 print(f"  [FETCH] executing JS fetch...")
                 payload = self._build_api_payload(query, 0)
                 payload_json = json.dumps(payload)
+                print(f"  [FETCH] payload: {payload_json[:200]}...")
                 data = await page.evaluate(
                     f"async () => {{ const r = await fetch('/api/flight/FetchFlights',"
                     f"{{method:'POST',credentials:'include',headers:{{'Content-Type':'application/json'}},"
