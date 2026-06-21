@@ -122,8 +122,12 @@ class UnitedScraper(BaseAirlineScraper):
                 code = await self._handle_mfa(page)
                 if not code:
                     raise MFARequired("MFA code required but no callback provided")
-                await self._submit_mfa(page, code)
-                await asyncio.sleep(3)
+                try:
+                    await self._submit_mfa(page, code)
+                    await asyncio.sleep(3)
+                except Exception:
+                    # MFA form might have auto-advanced; check login state
+                    pass
 
             if not await self._is_logged_in(page):
                 raise LoginError("Login failed — check credentials or MFA")
@@ -156,19 +160,29 @@ class UnitedScraper(BaseAirlineScraper):
         return None
 
     async def _submit_mfa(self, page: Page, code: str) -> None:
-        mfa_input = await page.wait_for_selector(
-            'input[name="otp"], input[data-test="otp-input"], input[autocomplete="one-time-code"]',
-            timeout=60000,
+        # Try multiple selectors for MFA input
+        mfa_sel = (
+            'input[name="otp"], input[data-test="otp-input"], '
+            'input[autocomplete="one-time-code"], '
+            'input[type="text"]:visible, input[type="tel"]:visible, '
+            'input[id*="code"]:visible, input[id*="otp"]:visible, '
+            'input[name*="code"]:visible, input[name*="verif"]:visible'
         )
+        mfa_input = await page.wait_for_selector(mfa_sel, timeout=60000)
         if mfa_input:
             await mfa_input.fill(code)
 
+            # Try multiple submit buttons
             submit_btn = await page.wait_for_selector(
-                'button[type="submit"]:not([disabled])', timeout=30000
+                'button[type="submit"]:not([disabled]), '
+                'button:has-text("Verify"):visible, '
+                'button:has-text("Submit"):visible, '
+                'button:has-text("Confirm"):visible',
+                timeout=30000,
             )
             if submit_btn:
                 await submit_btn.click()
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
 
     # --- Search ---
 
