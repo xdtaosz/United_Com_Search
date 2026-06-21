@@ -41,16 +41,36 @@ class UnitedScraper(BaseAirlineScraper):
     def _token_validation_url(self) -> str | None:
         return f"{UNITED_BASE}/api/auth/validate-token"
 
-    async def _validate_token(self, token: str) -> bool:
-        """Check session via browser (httpx blocked by Akamai)."""
-        if not await self.load_cookies():
-            return False
-        ctx = await self._ensure_browser()
-        page = await ctx.new_page()
-        try:
-            return await self._is_logged_in(page)
-        finally:
+    async def login(self) -> bool:
+        """Override: check session file first, skip browser if valid."""
+        # 1. Session file — if recent, use it without any network call
+        saved = self._session.load(self.airline_name)
+        if saved:
+            token = saved.get("bearer_token")
+            if token:
+                self._bearer_token = token
+                self._touch_session()
+                return True
+
+        # 2. Cookie-based login (load cookies, verify via browser)
+        if await self.load_cookies():
+            ctx = await self._ensure_browser()
+            page = await ctx.new_page()
+            try:
+                await page.goto(self.login_url, wait_until="commit", timeout=30000)
+                await asyncio.sleep(10)
+                if await self._is_logged_in(page):
+                    await page.close()
+                    self._bearer_token = await self._capture_bearer_token(ctx)
+                    if self._bearer_token:
+                        await self._save_full_session()
+                    return True
+            except Exception:
+                pass
             await page.close()
+
+        # 3. Full login with credentials
+        return await self._do_login()
 
     async def _is_logged_in(self, page: Page) -> bool:
         try:
