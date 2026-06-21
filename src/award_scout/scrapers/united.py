@@ -282,6 +282,7 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
                 resp = await client.post(UNITED_FETCH_AWARD_CALENDAR, json=payload, headers=headers)
+                log._write(f"[STAGE1] Calendar API status: {resp.status_code}")
                 if _is_rate_limited(resp):
                     log.error("calendar_fetch", f"RATE LIMITED (status {resp.status_code})")
                     return {}
