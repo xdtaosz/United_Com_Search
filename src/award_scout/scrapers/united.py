@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import urllib.parse
 from datetime import date, timedelta
@@ -277,6 +278,11 @@ class UnitedScraper(BaseAirlineScraper):
 
         try:
             ctx = await self._ensure_browser()
+            # Load saved cookies for authentication
+            if self.cookie_file.exists():
+                cookies = json.loads(self.cookie_file.read_text())
+                await ctx.add_cookies(cookies)
+                print(f"  [CALENDAR] loaded {len(cookies)} cookies")
             page = await ctx.new_page()
 
             # Build calendar search URL (flexible dates, one-way, award miles)
@@ -473,6 +479,9 @@ class UnitedScraper(BaseAirlineScraper):
 
     async def _search_via_browser(self, query: SearchQuery) -> list[AwardOffer]:
         ctx = await self._ensure_browser()
+        if self.cookie_file.exists():
+            cookies = json.loads(self.cookie_file.read_text())
+            await ctx.add_cookies(cookies)
         page = await ctx.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
 
