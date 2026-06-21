@@ -495,6 +495,15 @@ class UnitedScraper(BaseAirlineScraper):
             ) as resp_info:
                 # Navigate: page will auto-trigger FetchFlights
                 await page.goto(search_url, wait_until="commit", timeout=60000)
+                await asyncio.sleep(20)
+                # Click Update/Find flights to trigger search if needed
+                search_btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
+                if await search_btn.count() > 0:
+                    try:
+                        await search_btn.click(timeout=5000)
+                        print(f"  [FETCH] clicked search button")
+                    except Exception:
+                        pass
                 # If page shows login, auto-fill
                 pw = page.locator('input[type="password"]').first
                 if await pw.count() > 0 and await pw.is_visible():
@@ -506,14 +515,13 @@ class UnitedScraper(BaseAirlineScraper):
                     # Re-navigate after login
                     await page.goto(search_url, wait_until="commit", timeout=60000)
                     await asyncio.sleep(20)
-                    # Click Update/Find flights to trigger search
                     search_btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
                     if await search_btn.count() > 0:
                         try:
                             await search_btn.click(timeout=5000)
                         except Exception:
                             await search_btn.click(force=True)
-                        print(f"  [FETCH] clicked search button")
+                        print(f"  [FETCH] clicked search button after login")
             resp = await resp_info.value
             data = await resp.json()
             trips = (data.get("data", data)).get("Trips", [])
