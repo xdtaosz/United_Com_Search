@@ -312,12 +312,14 @@ class UnitedScraper(BaseAirlineScraper):
             # Click Update to trigger calendar API
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
-                timeout=45000
+                timeout=90000
             ) as resp_info:
                 btn = page.locator('button:has-text("Update"), button:has-text("Find flights")').first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
                     print(f"  [CALENDAR] clicked search button...")
+                else:
+                    print(f"  [CALENDAR] search button not found, waiting...")
             resp = await resp_info.value
             data = await resp.json()
             result = self._parse_calendar_dates(data, max_miles, log)
@@ -326,14 +328,10 @@ class UnitedScraper(BaseAirlineScraper):
             await page.close()
             return result
         except Exception as e:
-            print(f"  [CALENDAR] failed: {e}")
+            print(f"  [CALENDAR] failed (will query all dates individually): {e}")
             if page:
                 await page.close()
-        except Exception as e:
-            print(f"  [CALENDAR] failed: {e}")
-            log.error("calendar_fetch", str(e)[:120])
-
-        return {}
+            return {}
 
     async def search_range(
         self,
