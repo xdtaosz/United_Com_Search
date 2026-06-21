@@ -292,9 +292,22 @@ class UnitedScraper(BaseAirlineScraper):
                 f"&d={start_date.strftime('%Y/%m/%d')}"
                 f"&tt=1&at=1&sc=7&act=2&px=1&tqp=A"
             )
-            print(f"  [CALENDAR] navigating to search form...")
+            print(f"  [CALENDAR] navigating...")
             await page.goto(calendar_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(15)
+            await asyncio.sleep(12)
+
+            # If page shows login form, fill password automatically
+            pw = page.locator('input[type="password"]').first
+            if await pw.count() > 0 and await pw.is_visible():
+                print(f"  [CALENDAR] login required, filling password...")
+                await pw.fill(settings.united_password or "")
+                signin = page.locator('button:has-text("Sign in")').last
+                if await signin.count() > 0 and await signin.is_visible():
+                    await signin.click()
+                    await asyncio.sleep(5)
+                    # Re-navigate to trigger search after login
+                    await page.goto(calendar_url, wait_until="commit", timeout=60000)
+                    await asyncio.sleep(10)
 
             # Click Update to trigger calendar API
             async with page.expect_response(
@@ -472,6 +485,19 @@ class UnitedScraper(BaseAirlineScraper):
         page.set_default_timeout(settings.browser_timeout_ms)
 
         search_url = self._build_search_url(query)
+
+        # If page shows login form, fill password
+        await page.goto(search_url, wait_until="commit", timeout=60000)
+        await asyncio.sleep(10)
+        pw = page.locator('input[type="password"]').first
+        if await pw.count() > 0 and await pw.is_visible():
+            await pw.fill(settings.united_password or "")
+            btn = page.locator('button:has-text("Sign in")').last
+            if await btn.count() > 0:
+                await btn.click()
+                await asyncio.sleep(5)
+            await page.goto(search_url, wait_until="commit", timeout=60000)
+            await asyncio.sleep(10)
         try:
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchFlights' in r.url,
