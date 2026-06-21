@@ -493,25 +493,33 @@ class UnitedScraper(BaseAirlineScraper):
 
         # Load cookies and navigate
         await page.goto(search_url, wait_until="commit", timeout=60000)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
 
         # Check for login modal and auto-fill
         pw = page.locator('input[type="password"]').first
-        if await pw.count() > 0:
-            visible = await pw.is_visible()
-            print(f"  [FETCH] password field detected (visible={visible}), auto-filling...")
-            if visible:
-                await pw.fill(settings.united_password or "")
-                signin = page.locator('button:has-text("Sign in")').last
-                if await signin.count() > 0:
-                    await signin.click()
-                    print(f"  [FETCH] clicked Sign in")
-                    await asyncio.sleep(8)
-                    # After login, re-navigate to trigger search
-                    await page.goto(search_url, wait_until="commit", timeout=60000)
-                    await asyncio.sleep(20)
+        pw_count = await pw.count()
+        pw_visible = pw_count > 0 and await pw.is_visible()
+        print(f"  [FETCH] password field: count={pw_count} visible={pw_visible}")
 
-        # Now try JS fetch from the authenticated page
+        if pw_visible:
+            print(f"  [FETCH] auto-filling password...")
+            await pw.fill(settings.united_password or "")
+            await asyncio.sleep(1)
+            # Click Sign in button
+            signin = page.locator('button:has-text("Sign in")').last
+            if await signin.count() > 0:
+                await signin.click()
+                print(f"  [FETCH] clicked Sign in, waiting...")
+                await asyncio.sleep(10)
+                # Re-navigate after login
+                await page.goto(search_url, wait_until="commit", timeout=60000)
+                await asyncio.sleep(20)
+                # Save fresh cookies
+                new_cookies = await ctx.cookies()
+                self.cookie_file.write_text(json.dumps(new_cookies, indent=2))
+                print(f"  [FETCH] saved {len(new_cookies)} fresh cookies")
+
+        # Now JS fetch from authenticated page
         try:
             print(f"  [FETCH] executing JS fetch...")
             payload = self._build_api_payload(query, 0)
