@@ -489,20 +489,20 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchFlights' in r.url,
-                timeout=90000
+                timeout=60000
             ) as resp_info:
-                # Navigate: page will auto-trigger FetchFlights
                 await page.goto(search_url, wait_until="commit", timeout=60000)
-                # Auto-fill password if login required
-                pw = page.locator('input[type="password"]').first
-                if await pw.count() > 0 and await pw.is_visible():
-                    await pw.fill(settings.united_password or "")
-                    btn = page.locator('button:has-text("Sign in")').last
-                    if await btn.count() > 0:
-                        await btn.click()
-                    await page.goto(search_url, wait_until="commit", timeout=60000)
             resp = await resp_info.value
             data = await resp.json()
+        except Exception:
+            # Fallback: JS fetch inside authenticated page
+            data = await page.evaluate(
+                "async () => { const r = await fetch('/api/flight/FetchFlights',"
+                "{method:'POST',credentials:'include',"
+                "headers:{'Content-Type':'application/json'},"
+                "body:'" + json.dumps(self._build_api_payload(query, 0)).replace("'", "\\'") + "'});"
+                "return await r.json(); }"
+            )
             trips = (data.get("data", data)).get("Trips", [])
             for t in trips:
                 flights = t.get("Flights", [])
