@@ -99,6 +99,14 @@ async def _check_rule(rule: WatchRule) -> list[AwardOffer]:
             await asyncio.sleep(base + jitter)
         first_airline = False
 
+    # Log raw vs filtered
+    mnl_count = sum(1 for o in all_offers if any(
+        s.departure_airport == "MNL" or s.arrival_airport == "MNL"
+        for s in o.segments
+    ))
+    if mnl_count > 0:
+        print(f"  Raw results: {len(all_offers)} (incl {mnl_count} via MNL to be excluded)")
+
     return all_offers
 
 

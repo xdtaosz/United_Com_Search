@@ -335,8 +335,13 @@ class UnitedScraper(BaseAirlineScraper):
                 break
             if offers:
                 all_offers.extend(offers)
+                # Log raw counts (before MNL filtering)
+                mnl_count = sum(1 for o in offers if any(
+                    s.departure_airport == "MNL" or s.arrival_airport == "MNL"
+                    for s in o.segments
+                ))
+                log._write(f"[STAGE2] {current.isoformat()}: {len(offers)} flights found (incl {mnl_count} via MNL)")
                 self._log_stage2_flights(log, offers)
-                log.stage2_summary(current.isoformat(), len(offers))
             else:
                 log.stage2_empty(current.isoformat())
 
