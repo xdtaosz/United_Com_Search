@@ -484,18 +484,6 @@ class UnitedScraper(BaseAirlineScraper):
 
         search_url = self._build_search_url(query)
 
-        # If page shows login form, fill password
-        await page.goto(search_url, wait_until="commit", timeout=60000)
-        await asyncio.sleep(20)
-        pw = page.locator('input[type="password"]').first
-        if await pw.count() > 0 and await pw.is_visible():
-            await pw.fill(settings.united_password or "")
-            btn = page.locator('button:has-text("Sign in")').last
-            if await btn.count() > 0:
-                await btn.click()
-                await asyncio.sleep(5)
-            await page.goto(search_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(20)
         try:
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchFlights' in r.url,
