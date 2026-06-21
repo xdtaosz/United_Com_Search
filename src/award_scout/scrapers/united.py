@@ -363,9 +363,6 @@ class UnitedScraper(BaseAirlineScraper):
         all_offers: list[AwardOffer] = []
         current = start_date
         while current <= end_date:
-                current += timedelta(days=1)
-                continue
-
             log.stage2_start(current.isoformat())
             query = SearchQuery(
                 origin=origin, destination=destination, depart_date=current, cabin=cabin,
