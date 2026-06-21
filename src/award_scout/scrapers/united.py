@@ -158,13 +158,13 @@ class UnitedScraper(BaseAirlineScraper):
     async def _submit_mfa(self, page: Page, code: str) -> None:
         mfa_input = await page.wait_for_selector(
             'input[name="otp"], input[data-test="otp-input"], input[autocomplete="one-time-code"]',
-            timeout=10000,
+            timeout=60000,
         )
         if mfa_input:
             await mfa_input.fill(code)
 
             submit_btn = await page.wait_for_selector(
-                'button[type="submit"]:not([disabled])', timeout=5000
+                'button[type="submit"]:not([disabled])', timeout=30000
             )
             if submit_btn:
                 await submit_btn.click()
