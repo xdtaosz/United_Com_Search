@@ -504,15 +504,21 @@ class UnitedScraper(BaseAirlineScraper):
         print(f"  [FETCH] login check: pw={pw_count}/{pw_visible} mp={mp_visible}")
 
         if mp_visible:
-            # MP not remembered — fill it first
             print(f"  [FETCH] filling MP number...")
             await mp_field.fill(settings.united_mp_number or "")
-            await asyncio.sleep(1)
-            # Click Continue/Next
-            ctn = page.locator('button:has-text("Continue"), button:has-text("Next")').first
-            if await ctn.count() > 0 and await ctn.is_visible():
-                await ctn.click()
-                await asyncio.sleep(5)
+            await asyncio.sleep(2)
+            # Click Continue/Next — don't check is_visible, just try
+            for btn_text in ["Continue", "Next"]:
+                ctn = page.locator(f'button:has-text("{btn_text}")').first
+                if await ctn.count() > 0:
+                    print(f"  [FETCH] clicking {btn_text}...")
+                    await ctn.click()
+                    await asyncio.sleep(8)
+                    break
+            # Re-check password after Continue
+            pw = page.locator('input[type="password"]').first
+            pw_visible = await pw.count() > 0 and await pw.is_visible()
+            print(f"  [FETCH] pw after Continue: {pw_visible}")
 
         if pw_visible:
             print(f"  [FETCH] filling password...")
