@@ -285,21 +285,32 @@ class UnitedScraper(BaseAirlineScraper):
                 print(f"  [CALENDAR] loaded {len(cookies)} cookies")
             page = await ctx.new_page()
 
-            # Build calendar search URL (flexible dates, one-way, award miles)
+            # Build calendar search URL
             calendar_url = (
                 f"https://www.united.com/en/us/fsr/choose-flights"
                 f"?f={origin.upper()}&t={destination.upper()}"
                 f"&d={start_date.strftime('%Y/%m/%d')}"
                 f"&tt=1&at=1&sc=7&act=2&px=1&tqp=A"
-                f"&st=bestmatches"
             )
-            print(f"  [CALENDAR] navigating to calendar view...")
+            print(f"  [CALENDAR] navigating to search form...")
+            await page.goto(calendar_url, wait_until="commit", timeout=60000)
+            await asyncio.sleep(15)
+
+            # Enable Flexible dates + click Update to trigger calendar API
+            flex = page.locator('input[name="Flexible"]')
+            if await flex.count() > 0:
+                await flex.check()
+                print(f"  [CALENDAR] Flexible dates enabled")
+                await asyncio.sleep(1)
 
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
                 timeout=45000
             ) as resp_info:
-                await page.goto(calendar_url, wait_until="commit", timeout=60000)
+                update = page.locator('button:has-text("Update")').first
+                if await update.count() > 0 and await update.is_visible():
+                    await update.click()
+                    print(f"  [CALENDAR] Update clicked, waiting for calendar...")
             resp = await resp_info.value
             data = await resp.json()
             result = self._parse_calendar_dates(data, max_miles, log)
