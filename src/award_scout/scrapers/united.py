@@ -112,14 +112,41 @@ class UnitedScraper(BaseAirlineScraper):
                 mp_field, _ = visible_text[0]
                 await mp_field.fill(mp_number)
 
-                # Check for Continue button
-                try:
-                    ctn = page.locator('button:has-text("Continue"), button:has-text("Next")').first
-                    if await ctn.count() > 0 and await ctn.is_visible():
-                        await ctn.click()
-                        await asyncio.sleep(3)
-                except Exception:
-                    pass
+                # Click any button that advances (Continue/Next, or try all visible buttons)
+                advanced = False
+                for btn_text in ["Continue", "Next", "Sign in", "Sign In"]:
+                    try:
+                        btn = page.locator(f'button:has-text("{btn_text}")').first
+                        if await btn.count() > 0 and await btn.is_visible():
+                            await btn.click()
+                            await asyncio.sleep(5)
+                            advanced = True
+                            break
+                    except Exception:
+                        pass
+
+                # If no specific button found, try any visible submit-type button
+                if not advanced:
+                    all_btns = page.locator('button:visible')
+                    for i in range(min(await all_btns.count(), 5)):
+                        btn = all_btns.nth(i)
+                        text = (await btn.text_content() or '').strip()
+                        if text and len(text) < 30:
+                            try:
+                                await btn.click()
+                                await asyncio.sleep(4)
+                                break
+                            except Exception:
+                                pass
+
+            # Re-scan for password field (may appear after Continue)
+            all_inputs = page.locator('input:visible')
+            for i in range(await all_inputs.count()):
+                inp = all_inputs.nth(i)
+                t = await inp.get_attribute('type') or 'text'
+                if t == 'password':
+                    pw_input = inp
+                    break
 
             # Fill password
             if pw_input is None:
