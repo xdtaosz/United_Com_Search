@@ -268,24 +268,37 @@ class UnitedScraper(BaseAirlineScraper):
         start_date: date,
         max_miles: int | None = None,
     ) -> dict[date, tuple[int, float]]:
-        """Call FetchAwardCalendar via browser, return dates→(miles, cash) with availability."""
+        """Try saved response first, then browser."""
         log = SearchLogger()
         route = f"{origin.upper()}→{destination.upper()}"
         cabin_name = cabin.value
         mm_str = f" ≤{max_miles:,}mi" if max_miles else ""
+
+        # Check for cached calendar response
+        cache_file = settings.data_path / f"calendar_{origin}_{destination}_{start_date.isoformat()}.json"
+        if cache_file.exists():
+            try:
+                data = json.loads(cache_file.read_text())
+                log.stage1_start(route, cabin_name, f"{start_date} +30d (cached){mm_str}")
+                result = self._parse_calendar_dates(data, max_miles, log)
+                log.stage1_summary(len(result), 30)
+                print(f"  [CALENDAR] cached: {len(result)} qualifying dates")
+                return result
+            except Exception:
+                pass
+
+        # Not cached — use browser
         log.stage1_start(route, cabin_name, f"{start_date} +30d{mm_str}")
         print(f"  [CALENDAR] browser: {route} {cabin_name} {start_date}")
 
         try:
             ctx = await self._ensure_browser()
-            # Load saved cookies for authentication
             if self.cookie_file.exists():
                 cookies = json.loads(self.cookie_file.read_text())
                 await ctx.add_cookies(cookies)
                 print(f"  [CALENDAR] loaded {len(cookies)} cookies")
             page = await ctx.new_page()
 
-            # Build calendar search URL
             calendar_url = (
                 f"https://www.united.com/en/us/fsr/choose-flights"
                 f"?f={origin.upper()}&t={destination.upper()}"
@@ -296,20 +309,17 @@ class UnitedScraper(BaseAirlineScraper):
             await page.goto(calendar_url, wait_until="commit", timeout=60000)
             await asyncio.sleep(25)
 
-            # If page shows login form, fill password automatically
+            # Auto-fill password if needed
             pw = page.locator('input[type="password"]').first
             if await pw.count() > 0 and await pw.is_visible():
-                print(f"  [CALENDAR] login required, filling password...")
                 await pw.fill(settings.united_password or "")
                 signin = page.locator('button:has-text("Sign in")').last
                 if await signin.count() > 0 and await signin.is_visible():
                     await signin.click()
                     await asyncio.sleep(5)
-                    # Re-navigate to trigger search after login
                     await page.goto(calendar_url, wait_until="commit", timeout=60000)
                     await asyncio.sleep(20)
 
-            # Navigate to calendar URL — FetchAwardCalendar triggers on load
             async with page.expect_response(
                 lambda r: r.status == 200 and 'FetchAwardCalendar' in r.url,
                 timeout=90000
@@ -317,13 +327,17 @@ class UnitedScraper(BaseAirlineScraper):
                 await page.goto(calendar_url, wait_until="commit", timeout=60000)
             resp = await resp_info.value
             data = await resp.json()
+            # Cache for future use
+            cache_file.write_text(json.dumps(data))
+            print(f"  [CALENDAR] cached response to {cache_file}")
+            
             result = self._parse_calendar_dates(data, max_miles, log)
             log.stage1_summary(len(result), 30)
             print(f"  [CALENDAR] {len(result)} qualifying dates")
             await page.close()
             return result
         except Exception as e:
-            print(f"  [CALENDAR] failed (will query all dates individually): {e}")
+            print(f"  [CALENDAR] failed: {e}")
             if page:
                 await page.close()
             return {}
