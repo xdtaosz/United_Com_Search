@@ -74,9 +74,15 @@ class UnitedScraper(BaseAirlineScraper):
             if not mp_number or not password:
                 raise LoginError("UNITED_MP_NUMBER and UNITED_PASSWORD must be set in .env")
 
-            # Navigate to login page
+            # Navigate to login page and wait for React to render
             await page.goto(UNITED_BASE + "/en/us/login", wait_until="commit", timeout=30000)
-            await asyncio.sleep(10)
+            await asyncio.sleep(25)
+
+            # If page hasn't rendered yet, wait longer
+            if await page.locator('button').count() == 0:
+                await asyncio.sleep(15)
+                print("  Extra wait for slow render...")
+            print(f"  Buttons on page: {await page.locator('button').count()}")
 
             # Click Sign in button to open modal
             for selector in [
