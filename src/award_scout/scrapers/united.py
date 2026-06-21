@@ -475,6 +475,16 @@ class UnitedScraper(BaseAirlineScraper):
 
             offers: list[AwardOffer] = []
             for resp in api_responses:
+                # Debug: show raw flight counts before parsing
+                trips = (resp.get("data", resp)).get("Trips", [])
+                for t in trips:
+                    flights = t.get("Flights", [])
+                    total_products = sum(len(f.get("Products", [])) for f in flights)
+                    cabins = set()
+                    for f in flights:
+                        for p in (f.get("Products", []) or []):
+                            cabins.add(p.get("CabinType", "?"))
+                    print(f"  [RAW] {t.get('DepartDate','?')}: {len(flights)} flights, {total_products} products, cabins: {sorted(cabins)}")
                 parsed = self._parse_fetch_response(resp, query)
                 offers.extend(parsed)
             return offers
@@ -512,6 +522,23 @@ class UnitedScraper(BaseAirlineScraper):
         Returns {date: (miles, cash)}. Only includes Business/First cabins."""
         dates: dict[date, tuple[int, float]] = {}
         d = data.get("data", data)
+        total_biz = 0
+        for trip in d.get("Trips", []):
+            for flight in trip.get("Flights", []):
+                products = flight.get("Products") or flight.get("Fares") or []
+                for prod in products:
+                    cabin_type = prod.get("CabinType", "")
+                    ctx = prod.get("Context", {})
+                    ngrp_miles = int(ctx.get("NgrpMiles", 0) or 0)
+                    pax_prices = ctx.get("PaxPrices", [])
+                    pax_miles = int(pax_prices[0].get("Miles", 0) if pax_prices else 0)
+                    miles = ngrp_miles or pax_miles
+                    if miles == 0:
+                        continue
+                    if cabin_type in ("Business", "BusinessFirst"):
+                        total_biz += 1
+        print(f"  [CALENDAR] raw: {total_biz} Business products across all dates")
+        
         for trip in d.get("Trips", []):
             for flight in trip.get("Flights", []):
                 products = flight.get("Products") or flight.get("Fares") or []
