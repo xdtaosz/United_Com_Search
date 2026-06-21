@@ -50,7 +50,8 @@ async def _check_rule(rule: WatchRule) -> list[AwardOffer]:
     end = rule.end_date or date.today()
     airlines = rule.airlines or ["united"]
 
-    print(f"Checking: {rule.origin}→{rule.destination} | {rule.cabin or 'any'} | "
+    cabin_display = (rule.cabin or CabinClass.ECONOMY).value if rule.cabin else "any"
+    print(f"Checking: {rule.origin}→{rule.destination} | {cabin_display} | "
           f"{start} to {end} | ≤{rule.max_miles or '∞'}mi | "
           f"exclude: MNL | notify: {rule.notify_via or 'none'}")
 
