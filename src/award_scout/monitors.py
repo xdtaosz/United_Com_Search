@@ -14,6 +14,7 @@ import httpx
 from award_scout.config import settings
 from award_scout.db.repository import Database
 from award_scout.models import AwardOffer, CabinClass, SearchQuery, WatchRule
+from award_scout.scrapers.base import RateLimitError
 
 
 async def run_watches() -> None:
@@ -68,7 +69,7 @@ async def _check_rule(rule: WatchRule) -> list[AwardOffer]:
                         max_miles=rule.max_miles,
                     )
                     all_offers.extend(offers)
-            else:
+            elif airline == "american":
                 # Other airlines: fallback to single-date search with delay
                 current = start
                 while current <= end:
@@ -82,6 +83,9 @@ async def _check_rule(rule: WatchRule) -> list[AwardOffer]:
                     offers = await _search_airline(airline, query)
                     all_offers.extend(offers)
                     current += timedelta(days=1)
+        except RateLimitError:
+            print(f"  RATE LIMITED — stopping check for {airline}")
+            break
         except Exception:
             pass
 

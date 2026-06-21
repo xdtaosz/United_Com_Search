@@ -29,6 +29,10 @@ class MFARequired(ScraperError):
         super().__init__(message)
 
 
+class RateLimitError(ScraperError):
+    """Raised when the airline API returns a rate-limit or access-denied response."""
+
+
 def _find_chrome() -> str | None:
     import shutil
 

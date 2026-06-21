@@ -17,7 +17,7 @@ from award_scout.models import (
     FlightSegment,
     SearchQuery,
 )
-from award_scout.scrapers.base import BaseAirlineScraper, LoginError, MFARequired
+from award_scout.scrapers.base import BaseAirlineScraper, LoginError, MFARequired, RateLimitError
 from award_scout.search_logger import SearchLogger
 
 UNITED_BASE = "https://www.united.com"
@@ -206,6 +206,9 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
                 resp = await client.post(UNITED_FETCH_AWARD_CALENDAR, json=payload, headers=headers)
+                if _is_rate_limited(resp):
+                    log.error("calendar_fetch", f"RATE LIMITED (status {resp.status_code})")
+                    return {}
                 if resp.status_code == 200:
                     data = resp.json()
                     result = self._parse_calendar_dates(data, max_miles, log)
@@ -243,7 +246,11 @@ class UnitedScraper(BaseAirlineScraper):
             query = SearchQuery(
                 origin=origin, destination=destination, depart_date=current, cabin=cabin,
             )
-            offers = await self._search_single_date(query)
+            try:
+                offers = await self._search_single_date(query)
+            except RateLimitError as e:
+                log.error("stage2", f"RATE LIMITED at {current.isoformat()} — stopping batch search. {e}")
+                break
             if offers:
                 all_offers.extend(offers)
                 self._log_stage2_flights(log, offers)
@@ -296,10 +303,14 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             async with httpx.AsyncClient(cookies=cookies, timeout=30, follow_redirects=True) as client:
                 resp = await client.post(UNITED_FETCH_FLIGHTS, json=payload, headers=headers)
+                if _is_rate_limited(resp):
+                    raise RateLimitError(f"Rate limited on {query.depart_date} (status {resp.status_code})")
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("Status") == 200:
                         return self._parse_fetch_response(data, query)
+        except RateLimitError:
+            raise
         except Exception:
             pass
         return []
@@ -574,7 +585,14 @@ def _short_time(iso_str: str) -> str:
     return iso_str[:5]
 
 
-def _parse_seats(availability: str, fare_class: str) -> int:
+def _is_rate_limited(resp) -> bool:
+    """Check if an httpx response indicates rate limiting or access denied."""
+    if resp.status_code in (403, 428, 429):
+        return True
+    content_type = resp.headers.get("content-type", "")
+    if "text/html" in content_type and resp.status_code != 200:
+        return True
+    return False
     """Extract seat count from BookingClassAvailability string.
     Format: 'J9|JN9|C9|...|XN4|X0' → for XN, returns 4.
     """
