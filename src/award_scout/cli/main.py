@@ -184,26 +184,26 @@ def query(
 
 @app.command()
 def watch(
-    origin: str = typer.Argument(..., help="Origin airport IATA code"),
-    destination: str = typer.Argument(..., help="Destination airport IATA code"),
-    start_date: str = typer.Option(None, "--start", help="Start date (YYYY-MM-DD)"),
-    end_date: str = typer.Option(None, "--end", help="End date (YYYY-MM-DD)"),
+    origin: Optional[str] = typer.Argument(None, help="Origin airport IATA code"),
+    destination: Optional[str] = typer.Argument(None, help="Destination airport IATA code"),
+    start_date: Optional[str] = typer.Option(None, "--start", help="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = typer.Option(None, "--end", help="End date (YYYY-MM-DD)"),
     cabin: Optional[str] = typer.Option(None, "--cabin", "-c", help="Cabin filter"),
     max_miles: Optional[int] = typer.Option(None, "--max-miles", "-m", help="Max miles"),
     max_stops: Optional[int] = typer.Option(None, "--max-stops", "-s", help="Max stops"),
     notify_via: Optional[str] = typer.Option(None, "--notify", "-n", help="Notification method (ntfy, email)"),
     notify_target: Optional[str] = typer.Option(None, "--notify-target", help="Notification target (ntfy topic or email address)"),
 ):
-    """Add a watch rule for continuous monitoring."""
+    """Add a watch rule for continuous monitoring. Uses .env defaults if arguments omitted."""
     from award_scout.models import WatchRule as WatchRuleModel
 
     rule = WatchRuleModel(
-        origin=origin,
-        destination=destination,
-        start_date=date.fromisoformat(start_date) if start_date else None,
-        end_date=date.fromisoformat(end_date) if end_date else None,
-        cabin=CabinClass(cabin) if cabin else None,
-        max_miles=max_miles,
+        origin=origin or settings.watch_origin or "",
+        destination=destination or settings.watch_destination or "",
+        start_date=date.fromisoformat(start_date) if start_date else (date.fromisoformat(settings.watch_start_date) if settings.watch_start_date else None),
+        end_date=date.fromisoformat(end_date) if end_date else (date.fromisoformat(settings.watch_end_date) if settings.watch_end_date else None),
+        cabin=CabinClass(cabin) if cabin else (CabinClass(settings.watch_cabin) if settings.watch_cabin else None),
+        max_miles=max_miles or settings.watch_max_miles,
         max_stops=max_stops,
         notify_via=notify_via,
         notify_target=notify_target,

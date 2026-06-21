@@ -35,7 +35,12 @@ class Settings(BaseSettings):
     browser_timeout_ms: int = 60_000
 
     # --- Monitoring ---
-    watch_interval_minutes: int = 240
+    watch_origin: Optional[str] = None
+    watch_destination: Optional[str] = None
+    watch_start_date: Optional[str] = None
+    watch_end_date: Optional[str] = None
+    watch_cabin: str = "business"
+    watch_max_miles: int = 110000
 
     # --- Rate limiting (anti-ban) ---
     search_delay_seconds: float = 60.0
