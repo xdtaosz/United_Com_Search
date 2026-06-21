@@ -278,37 +278,52 @@ class UnitedScraper(BaseAirlineScraper):
         try:
             ctx = await self._ensure_browser()
             page = await ctx.new_page()
-            responses = []
-            all_urls = []
 
-            async def capture(r):
-                url_short = r.url[r.url.find('/api/'):] if '/api/' in r.url else r.url[-60:]
-                all_urls.append(f"{r.status} {url_short}")
-                if r.status == 200 and ('FetchAwardCalendar' in r.url or 'FetchFlights' in r.url):
-                    try:
-                        responses.append(await r.json())
-                    except Exception:
-                        pass
+            # Build calendar search URL (flexible dates, one-way, award miles)
+            calendar_url = (
+                f"https://www.united.com/en/us/fsr/choose-flights"
+                f"?f={origin.upper()}&t={destination.upper()}"
+                f"&d={start_date.strftime('%Y/%m/%d')}"
+                f"&tt=1&at=1&sc=7&act=2&px=1&tqp=A"
+                f"&st=bestmatches"
+            )
+            print(f"  [CALENDAR] navigating to calendar view...")
 
-            page.on('response', capture)
-            search_url = f"https://www.united.com/en/us/fsr/choose-flights?f={origin.upper()}&t={destination.upper()}&d={start_date.strftime('%Y/%m/%d')}&tt=1&at=1&sc=7&act=2&px=1&tqp=A"
-            await page.goto(search_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(30)
-            page.remove_listener('response', capture)
-            await page.close()
-
-            # Show what API calls were made
-            api_calls = [u for u in all_urls if '/api/' in u or 'Fetch' in u]
-            print(f"  [CALENDAR] {len(all_urls)} responses, {len(api_calls)} API calls: {api_calls[:5]}")
-
-            if responses:
-                data = responses[0]
+            prom = page.waitForResponse(
+                lambda r: r.status == 200 and ('FetchAwardCalendar' in r.url),
+                timeout=45000
+            )
+            await page.goto(calendar_url, wait_until="commit", timeout=60000)
+            try:
+                resp = await prom
+                data = await resp.json()
                 result = self._parse_calendar_dates(data, max_miles, log)
                 log.stage1_summary(len(result), 30)
                 print(f"  [CALENDAR] {len(result)} qualifying dates")
+                await page.close()
                 return result
-            else:
-                print(f"  [CALENDAR] no calendar response — querying all dates individually")
+            except Exception as e:
+                print(f"  [CALENDAR] waitForResponse failed: {e}")
+                # Try event listener fallback
+                responses = []
+                async def capture(r):
+                    if r.status == 200 and ('FetchAwardCalendar' in r.url or 'FetchFlights' in r.url):
+                        try:
+                            responses.append(await r.json())
+                        except Exception:
+                            pass
+                page.on('response', capture)
+                await page.goto(calendar_url, wait_until="commit", timeout=60000)
+                await asyncio.sleep(30)
+                page.remove_listener('response', capture)
+                await page.close()
+                if responses:
+                    data = responses[0]
+                    result = self._parse_calendar_dates(data, max_miles, log)
+                    log.stage1_summary(len(result), 30)
+                    print(f"  [CALENDAR] fallback found {len(result)} qualifying dates")
+                    return result
+                print(f"  [CALENDAR] no calendar response — will query individually")
         except Exception as e:
             print(f"  [CALENDAR] failed: {e}")
             log.error("calendar_fetch", str(e)[:120])
@@ -460,42 +475,32 @@ class UnitedScraper(BaseAirlineScraper):
         ctx = await self._ensure_browser()
         page = await ctx.new_page()
         page.set_default_timeout(settings.browser_timeout_ms)
-        api_responses: list[dict[str, Any]] = []
 
-        async def capture_api(response):
-            if response.status == 200 and (
-                UNITED_FETCH_AWARD_CALENDAR in response.url
-                or UNITED_FETCH_FLIGHTS in response.url
-            ):
-                try:
-                    api_responses.append(await response.json())
-                except Exception:
-                    pass
-
-        page.on("response", capture_api)
+        search_url = self._build_search_url(query)
+        prom = page.waitForResponse(
+            lambda r: r.status == 200 and 'FetchFlights' in r.url,
+            timeout=45000
+        )
+        await page.goto(search_url, wait_until="commit", timeout=60000)
         try:
-            search_url = self._build_search_url(query)
-            await page.goto(search_url, wait_until="commit", timeout=60000)
-            await asyncio.sleep(25)
-
-            offers: list[AwardOffer] = []
-            for resp in api_responses:
-                # Debug: show raw flight counts before parsing
-                trips = (resp.get("data", resp)).get("Trips", [])
-                for t in trips:
-                    flights = t.get("Flights", [])
-                    total_products = sum(len(f.get("Products", [])) for f in flights)
-                    cabins = set()
-                    for f in flights:
-                        for p in (f.get("Products", []) or []):
-                            cabins.add(p.get("CabinType", "?"))
-                    print(f"  [RAW] {t.get('DepartDate','?')}: {len(flights)} flights, {total_products} products, cabins: {sorted(cabins)}")
-                parsed = self._parse_fetch_response(resp, query)
-                offers.extend(parsed)
-            return offers
-        finally:
-            page.remove_listener("response", capture_api)
+            resp = await prom
+            data = await resp.json()
+            trips = (data.get("data", data)).get("Trips", [])
+            for t in trips:
+                flights = t.get("Flights", [])
+                total_products = sum(len(f.get("Products", [])) for f in flights)
+                cabins = set()
+                for f in flights:
+                    for p in (f.get("Products", []) or []):
+                        cabins.add(p.get("CabinType", "?"))
+                print(f"  [RAW] {t.get('DepartDate','?')}: {len(flights)} flights, {total_products} products, cabins: {sorted(cabins)}")
+            parsed = self._parse_fetch_response(data, query)
             await page.close()
+            return parsed
+        except Exception as e:
+            print(f"  [FETCH] waitForResponse failed: {e}")
+            await page.close()
+            return []
 
     def _build_search_url(self, query: SearchQuery) -> str:
         sc = "7" if query.cabin in (CabinClass.BUSINESS, CabinClass.FIRST) else "3"
