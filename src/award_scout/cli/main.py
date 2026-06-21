@@ -238,7 +238,7 @@ def watches():
     for r in rules:
         dates = f"{r.start_date or '—'} → {r.end_date or '—'}"
         table.add_row(
-            r.id[:8],
+            r.id,
             f"{r.origin} → {r.destination}",
             dates,
             r.cabin.value if r.cabin else "any",
