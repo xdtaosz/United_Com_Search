@@ -358,15 +358,11 @@ class UnitedScraper(BaseAirlineScraper):
         mm_str = f" ≤{max_miles:,}mi" if max_miles else " no limit"
         log._write(f"[SEARCH] {route} | {cabin_name} | {start_date} to {end_date}{mm_str} | delay={settings.search_delay_seconds}s")
 
-        # Stage 1: calendar overview
-        available = await self.get_available_dates(origin, destination, cabin, start_date, max_miles)
-
-        # Stage 2: FetchFlights per qualifying date (or all dates if calendar failed)
+        # Query all dates via FetchFlights (no calendar pre-filter)
         log = SearchLogger()
         all_offers: list[AwardOffer] = []
         current = start_date
         while current <= end_date:
-            if available and current not in available:
                 current += timedelta(days=1)
                 continue
 
